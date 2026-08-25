@@ -4,8 +4,9 @@
 
 import type { MarketIntel, RankedOpportunity } from "./types";
 import type { OpportunityAlert } from "./opportunity-alert";
+import { OPERATOR_SURFACE_THRESHOLDS, type OperatorSurfaceThresholds } from "./operator-surface-thresholds";
 
-export const STRUCTURAL_MIN_TICKS = 20;
+export const STRUCTURAL_MIN_TICKS = OPERATOR_SURFACE_THRESHOLDS.minTicks;
 
 export interface OperatorSurfaceGateOptions {
   minTicks?: number;
@@ -13,6 +14,7 @@ export interface OperatorSurfaceGateOptions {
   minScore?: number;
   maxDanger?: number;
   maxContradiction?: number;
+  threatVetoThreshold?: number;
 }
 
 export interface OperatorSurfaceGateResult {
@@ -58,11 +60,12 @@ export function operatorSurfaceGate(
     };
   }
 
-  const minTicks = options?.minTicks ?? STRUCTURAL_MIN_TICKS;
-  const maxDataAgeMs = options?.maxDataAgeMs ?? 15000;
-  const minScore = options?.minScore ?? 65;
-  const maxDanger = options?.maxDanger ?? 45;
-  const maxContradiction = options?.maxContradiction ?? 40;
+  const minTicks = options?.minTicks ?? OPERATOR_SURFACE_THRESHOLDS.minTicks;
+  const maxDataAgeMs = options?.maxDataAgeMs ?? OPERATOR_SURFACE_THRESHOLDS.maxDataAgeMs;
+  const minScore = options?.minScore ?? OPERATOR_SURFACE_THRESHOLDS.minScore;
+  const maxDanger = options?.maxDanger ?? OPERATOR_SURFACE_THRESHOLDS.maxDanger;
+  const maxContradiction = options?.maxContradiction ?? OPERATOR_SURFACE_THRESHOLDS.maxContradiction;
+  const threatVetoLimit = options?.threatVetoThreshold ?? OPERATOR_SURFACE_THRESHOLDS.threatVetoThreshold;
 
   const resolvedIntel = intel ?? candidate?.intel ?? null;
   const contract = candidate?.contract ?? null;
@@ -74,18 +77,20 @@ export function operatorSurfaceGate(
         : 0;
 
   // 1. Structural Minimum Ticks (>= 20)
+  const getTickCount = (val: any) => (Array.isArray(val) ? val.length : typeof val === "number" ? val : 0);
   const ticksCount =
-    resolvedIntel?.ticks ??
-    resolvedIntel?.digits?.length ??
-    candidate?.intel?.ticks ??
-    candidate?.intel?.deepTicks ??
-    contract?.n ??
-    0;
+    getTickCount(resolvedIntel?.ticks) ||
+    getTickCount(resolvedIntel?.digits) ||
+    getTickCount(candidate?.intel?.ticks) ||
+    getTickCount(candidate?.intel?.deepTicks) ||
+    getTickCount(contract?.n) ||
+    (typeof resolvedIntel?.ticks === "number" ? resolvedIntel.ticks : 0);
   const structuralMinTicks = ticksCount >= minTicks;
 
   // 2. Data Freshness (age <= 15000ms and not UNAVAILABLE/STALE)
   const dataAgeMs =
     resolvedIntel?.ageMs ??
+    resolvedIntel?.lastTickAgeMs ??
     (resolvedIntel?.lastTickAt ? Math.max(0, Date.now() - resolvedIntel.lastTickAt) : (candidate?.dataAgeMs ?? 0));
   const dataState = resolvedIntel?.dataState ?? "OK";
   const dataFreshness = (dataState === "OK" || dataState === "ROBUST") && dataAgeMs <= maxDataAgeMs;
@@ -107,7 +112,8 @@ export function operatorSurfaceGate(
     contract?.fakeEdge?.verdict ?? candidate?.fakeEdgeVerdict ?? "VALIDATED";
   const fakeEdge =
     fakeEdgeVerdict !== "REJECTED" &&
-    (fakeEdgeVerdict === "VALIDATED" || (fakeEdgeVerdict === "SUSPICIOUS" && score >= 70));
+    (fakeEdgeVerdict === "VALIDATED" ||
+      (fakeEdgeVerdict === "SUSPICIOUS" && score >= OPERATOR_SURFACE_THRESHOLDS.fakeEdgeSuspiciousScoreFloor));
 
   // 5. Entry Clearance (CLEARED / EXECUTE / cleared === true)
   const clearanceObj =
@@ -123,10 +129,15 @@ export function operatorSurfaceGate(
 
   // 6. Danger Threshold (<= 45 and not hard blocked)
   const dangerVal =
-    contract?.danger ??
-    candidate?.dangerScore ??
-    candidate?.danger ??
-    0;
+    typeof candidate?.danger === "number"
+      ? candidate.danger
+      : typeof candidate?.dangerScore === "number"
+        ? candidate.dangerScore
+        : typeof candidate?.danger?.total === "number"
+          ? candidate.danger.total
+          : typeof contract?.danger === "number"
+            ? contract.danger
+            : 0;
   const dangerHardBlocked = Boolean(
     candidate?.danger?.isHardBlocked || candidate?.dangerComposition?.isHardBlocked,
   );
@@ -134,10 +145,15 @@ export function operatorSurfaceGate(
 
   // 7. Contradiction Threshold (<= 40%)
   const contradictionVal =
-    contract?.contradiction ??
-    candidate?.contradictionScore ??
-    candidate?.contradiction ??
-    0;
+    typeof candidate?.contradiction === "number"
+      ? candidate.contradiction
+      : typeof candidate?.contradictionScore === "number"
+        ? candidate.contradictionScore
+        : typeof candidate?.contradiction?.total === "number"
+          ? candidate.contradiction.total
+          : typeof contract?.contradiction === "number"
+            ? contract.contradiction
+            : 0;
   const contradictionThreshold = contradictionVal <= maxContradiction;
 
   // 8. Opportunity Score (>= 65)
@@ -146,7 +162,7 @@ export function operatorSurfaceGate(
   // 9. Active Threat Veto Streak
   const groupThreat =
     contract?.threat?.groupThreat ?? candidate?.threat?.groupThreat ?? 0;
-  const threatVetoThreshold = contract?.threatVeto ?? 65;
+  const threatVetoThreshold = contract?.threatVeto ?? threatVetoLimit;
   const isHardVetoed = Boolean(
     candidate?.blocked ||
       candidate?.veto?.hard ||
@@ -217,6 +233,20 @@ export function operatorSurfaceGate(
     reasons.push(`Contradiction acceptable (${contradictionVal.toFixed(0)}%)`);
   }
 
+  // Setup grade check if explicitly specified on candidate
+  if (candidate?.setup?.grade === "POOR" || candidate?.setupQuality === "POOR") {
+    blockers.push("POOR SETUP GRADE (Setup quality unusable)");
+  }
+
+  // Structural direction check if explicitly conflicting
+  if (
+    candidate?.direction &&
+    candidate?.structuralDirection &&
+    candidate.direction !== candidate.structuralDirection
+  ) {
+    blockers.push(`STRUCTURAL_DIRECTION_CONFLICT (${candidate.direction} vs structural ${candidate.structuralDirection})`);
+  }
+
   if (!opportunityScore) {
     blockers.push(`OPPORTUNITY_SCORE_TOO_LOW (${score.toFixed(1)} < ${minScore})`);
   } else {
@@ -237,10 +267,10 @@ export function operatorSurfaceGate(
   if (qualified) {
     surfaceState = "SURFACED";
   } else if (
-    score >= 50 &&
+    score >= OPERATOR_SURFACE_THRESHOLDS.watchScoreFloor &&
     !isHardVetoed &&
     fakeEdgeVerdict !== "REJECTED" &&
-    dangerVal <= 60
+    dangerVal <= OPERATOR_SURFACE_THRESHOLDS.watchDangerCeiling
   ) {
     surfaceState = "WATCH";
   }
@@ -253,3 +283,5 @@ export function operatorSurfaceGate(
     blockers,
   };
 }
+
+export const evaluateOperatorSurfaceGate = operatorSurfaceGate;

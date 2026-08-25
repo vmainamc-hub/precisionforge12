@@ -150,18 +150,18 @@ export function assessEntryClearance(input: EntryClearanceInputs): EntryClearanc
   req(
     "SETUP_SCORE",
     "Setup score threshold",
-    setup.score >= minSetup && !setup.autoBlocked,
+    (setup.score ?? 0) >= minSetup && !setup.autoBlocked,
     "WAIT",
-    `Setup ${setup.score.toFixed(0)}/100 (${setup.grade}) against the ${minSetup} requirement — direction ${setup.direction.score.toFixed(0)} (${setup.direction.label}).`,
+    `Setup ${(setup.score ?? 0).toFixed(0)}/100 (${setup.grade ?? "UNKNOWN"}) against the ${minSetup} requirement — direction ${(setup.direction?.score ?? 0).toFixed(0)} (${setup.direction?.label ?? "UNKNOWN"}).`,
   );
 
   // ── 4. Direction must actually point at this contract ────────────────
   req(
     "DIRECTION_SIDE",
     "Direction supports this contract",
-    setup.direction.label !== "AGAINST",
+    setup.direction?.label !== "AGAINST",
     "BLOCK",
-    setup.direction.summary,
+    setup.direction?.summary ?? "Direction evaluated.",
   );
 
   // ── 5. Combination evidence must not be failing ──────────────────────
@@ -179,8 +179,8 @@ export function assessEntryClearance(input: EntryClearanceInputs): EntryClearanc
     exact.state !== "DETERIORATING",
     "WAIT",
     exact.state === "DETERIORATING"
-      ? `Recent drift ${exact.deteriorationPp.toFixed(1)}pp on weighted N=${exact.weightedN.toFixed(1)} — this combination is losing effectiveness.`
-      : `Drift ${exact.deteriorationPp >= 0 ? "+" : ""}${exact.deteriorationPp.toFixed(1)}pp on weighted N=${exact.weightedN.toFixed(1)}.`,
+      ? `Recent drift ${(exact.deteriorationPp ?? 0).toFixed(1)}pp on weighted N=${(exact.weightedN ?? 0).toFixed(1)} — this combination is losing effectiveness.`
+      : `Drift ${(exact.deteriorationPp ?? 0) >= 0 ? "+" : ""}${(exact.deteriorationPp ?? 0).toFixed(1)}pp on weighted N=${(exact.weightedN ?? 0).toFixed(1)}.`,
   );
 
   // ── 6. Sample size for this exact combination ────────────────────────

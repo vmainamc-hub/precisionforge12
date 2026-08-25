@@ -337,3 +337,80 @@ function translateSignalState(
     source,
   };
 }
+
+export interface SignalLifecycleMapping {
+  phase: "EVALUATING" | "INCUBATING" | "ACTIONABLE" | "EXPIRED" | "BLOCKED";
+  isActionable: boolean;
+  isWaitingForTrigger: boolean;
+  displayLabel: string;
+}
+
+/**
+ * Maps the 8 canonical states without collapsing:
+ * WATCH, DEVELOPING, QUALIFIED, VALID_WAIT_ENTRY, STRONG, EXECUTION_READY, BLOCKED/INVALIDATED, EXPIRED
+ */
+export function mapObservationStateToSignalLifecycle(
+  state: string,
+): SignalLifecycleMapping {
+  switch (state) {
+    case "RIPE":
+    case "EXECUTION_READY":
+    case "STRONG":
+      return {
+        phase: "ACTIONABLE",
+        isActionable: true,
+        isWaitingForTrigger: false,
+        displayLabel: state,
+      };
+    case "VALID_WAIT_ENTRY":
+    case "CONFIRMING":
+      return {
+        phase: "INCUBATING",
+        isActionable: false,
+        isWaitingForTrigger: true,
+        displayLabel: "QUALIFIED — WAITING FOR ENTRY",
+      };
+    case "QUALIFIED":
+      return {
+        phase: "INCUBATING",
+        isActionable: false,
+        isWaitingForTrigger: true,
+        displayLabel: "QUALIFIED",
+      };
+    case "DEVELOPING":
+    case "INTERESTING":
+      return {
+        phase: "EVALUATING",
+        isActionable: false,
+        isWaitingForTrigger: false,
+        displayLabel: "DEVELOPING",
+      };
+    case "EXPIRED":
+    case "DECAYING":
+      return {
+        phase: "EXPIRED",
+        isActionable: false,
+        isWaitingForTrigger: false,
+        displayLabel: "EXPIRED",
+      };
+    case "BLOCKED":
+    case "VETOED":
+    case "REJECTED":
+    case "INVALIDATED":
+      return {
+        phase: "BLOCKED",
+        isActionable: false,
+        isWaitingForTrigger: false,
+        displayLabel: "BLOCKED / INVALIDATED",
+      };
+    case "WATCH":
+    case "WATCHING":
+    default:
+      return {
+        phase: "EVALUATING",
+        isActionable: false,
+        isWaitingForTrigger: false,
+        displayLabel: "WATCH",
+      };
+  }
+}
