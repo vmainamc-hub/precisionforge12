@@ -1,7 +1,7 @@
 // Precision Parity AI — Canonical FinalSignal Card Component
 // The single reusable signal card across all Parity views and scanners.
 
-import React, { useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import {
   Sparkles,
   Zap,

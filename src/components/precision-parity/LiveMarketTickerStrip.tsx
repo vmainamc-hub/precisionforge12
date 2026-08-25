@@ -1,7 +1,6 @@
 // Live Market Ticker & Real-Time Digit Stream Strip
 // Provides real-time market selection, tick price, glowing digit indicator, 20-digit rolling tape, and Even/Odd probability metrics.
 
-import React from "react";
 import { PARITY_SYMBOLS } from "@/hooks/usePrecisionParity";
 import { Activity, Flame, Zap, CheckCircle2, TrendingUp } from "lucide-react";
 import { cn } from "@/lib/utils";

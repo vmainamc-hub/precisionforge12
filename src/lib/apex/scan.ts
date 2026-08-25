@@ -34,6 +34,7 @@ import type { PersistenceReport } from "../sentinel/scan-memory";
 import { operatorSurfaceGate } from "./operator-surface-gate";
 import { FinalDecisionEngine } from "../sentinel/final-decision";
 import { CircuitBreakerEngine } from "../risk/circuit-breaker";
+import { NearSignalEngine } from "../sentinel/near-signal";
 
 export interface ScanOptions {
   /** Extra score awarded to Under 7 / Over 2 — the operator's primary
@@ -655,7 +656,10 @@ export function rankOpportunities(
   }));
 
   const stage4 = FinalDecisionEngine.evaluateStage4(ranked, circuitBreaker, openPositions);
-  const finalRanked = stage4.ranked;
+  const finalRanked = stage4.ranked.map((r) => ({
+    ...r,
+    nearSignal: NearSignalEngine.evaluate(r),
+  }));
 
   if (recordHistory) {
     scanMemory.record(
@@ -680,7 +684,12 @@ export function rankOpportunities(
     );
   }
 
-  return { ranked: finalRanked, rejected };
+  return {
+    ranked: finalRanked,
+    rejected,
+    exposureReport: stage4.exposureReport,
+    circuitBreaker,
+  };
 }
 
 export function scanNow(
@@ -688,42 +697,8 @@ export function scanNow(
   opts: ScanOptions = DEFAULT_SCAN_OPTIONS,
 ): ScanResult {
   const online = intels.filter((i) => i.dataState === "OK");
-  const { ranked, rejected } = rankOpportunities(intels, opts, true);
+  const { ranked: finalRanked, rejected, exposureReport, circuitBreaker } = rankOpportunities(intels, opts, true);
   const gd = globalDanger(intels);
-
-  // Compute live circuit breaker & open positions to obtain full exposureReport
-  const pastTradeList = confirmedTrades();
-  let consecutiveLosses = 0;
-  for (let i = pastTradeList.length - 1; i >= 0; i--) {
-    if (pastTradeList[i].outcome === "LOSS") {
-      consecutiveLosses++;
-    } else if (pastTradeList[i].outcome === "WIN") {
-      break;
-    }
-  }
-  let peakPnl = 0;
-  let runningPnl = 0;
-  let maxDrawdown = 0;
-  for (const t of pastTradeList) {
-    const pnl = t.outcome === "WIN" ? (t.stake ?? 1) * 0.38 : -(t.stake ?? 1);
-    runningPnl += pnl;
-    if (runningPnl > peakPnl) peakPnl = runningPnl;
-    const dd = peakPnl - runningPnl;
-    if (dd > maxDrawdown) maxDrawdown = dd;
-  }
-  const sessionDrawdownPct = peakPnl > 0 ? (maxDrawdown / peakPnl) * 100 : 0;
-  const circuitBreaker = CircuitBreakerEngine.evaluate({
-    consecutiveLosses,
-    sessionDrawdownPct,
-    sustainedGlobalDanger: gd,
-  });
-  const openPositions = listPendingTrades().map((t) => ({
-    market: t.snapshot.symbol,
-    stake: t.stake ?? 1,
-  }));
-
-  const stage4 = FinalDecisionEngine.evaluateStage4(ranked, circuitBreaker, openPositions);
-  const finalRanked = stage4.ranked;
 
   // STRICT OPERATOR SURFACE GATE + STAGE 4 QUALIFICATION
   // Only candidates meeting all 9 operator gates AND cleared by Stage 4 are surfaced in top.
@@ -802,6 +777,7 @@ export function scanNow(
       analyzedAt: Date.now(),
       finalDecision: leadCandidate.finalDecision,
       recommendedStake: leadCandidate.recommendedStake,
+      nearSignal: leadCandidate.nearSignal,
     };
   }
 
@@ -832,7 +808,7 @@ export function scanNow(
     rejected: rejected.slice(0, 40),
     verdict,
     message,
-    exposureReport: stage4.exposureReport,
+    exposureReport,
     circuitBreaker,
   };
 }

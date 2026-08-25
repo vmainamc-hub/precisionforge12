@@ -1,7 +1,7 @@
 // Precision Digit Intelligence Card
 // Visualizes the 10x10 Transition Tensor, Digit Hazard Curve, 42-Contract Monte Carlo Universe, and Threshold Sweep.
 
-import React, { useState } from "react";
+import { useState } from "react";
 import { Layers } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {

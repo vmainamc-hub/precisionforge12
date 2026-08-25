@@ -50,6 +50,34 @@ function getCandidateContractLabel(c: any): string {
   return String(c.contract ?? "CONTRACT");
 }
 
+/**
+ * Validates whether a candidate is genuinely eligible/proposed for execution.
+ * Non-executable candidates (WAIT, BLOCKED, HELD, NOT_READY, zero-stake) must
+ * never contribute phantom exposure to group or portfolio totals.
+ */
+export function isCandidateEligibleForExposure(c: any): boolean {
+  if (!c) return false;
+
+  // If Stage 4 decision is present, only CLEARED candidates propose exposure
+  if (c.finalDecision) {
+    if (c.finalDecision.verdict !== "CLEARED") return false;
+  }
+
+  // Check Stage 3 entry clearance
+  if (c.entryClearance && c.entryClearance.verdict !== "CLEARED") return false;
+
+  // Check hard block states
+  if (c.blocked === true || c.clearance?.state === "BLOCKED") return false;
+
+  // Check legacy OpportunityCandidate signalState if present
+  if (c.signalState && c.signalState !== "STRONG" && c.signalState !== "VALID" && c.signalState !== "EXECUTION_READY") {
+    if (!c.finalDecision) return false;
+  }
+
+  const stake = c.recommendedStake?.drawdownAdjustedStake ?? 0;
+  return stake > 0;
+}
+
 export class PortfolioExposureEngine {
   public static evaluateExposure<T = OpportunityCandidate>(
     candidates: T[],
@@ -70,7 +98,10 @@ export class PortfolioExposureEngine {
     };
 
     for (const p of openPositions) bump(p.market, p.stake, `open:${p.market}`);
+
+    // ONLY genuinely eligible/proposed candidates contribute to exposure totals
     for (const c of candidates as any[]) {
+      if (!isCandidateEligibleForExposure(c)) continue;
       const stake = c.recommendedStake?.drawdownAdjustedStake ?? 0;
       const market = getCandidateMarket(c);
       const label = getCandidateContractLabel(c);
@@ -111,7 +142,8 @@ export class PortfolioExposureEngine {
       totalProposedExposure > PORTFOLIO_CEILING ? "BLOCK_NEW" : anyBreached ? "TRIM" : "OK";
 
     if (recommendation === "BLOCK_NEW") {
-      for (const cand of candidates) {
+      for (const cand of candidates as any[]) {
+        if (!isCandidateEligibleForExposure(cand)) continue;
         const key = getCandidateKey(cand);
         if (heldCandidates.some((h) => getCandidateKey(h.candidate) === key)) continue;
         heldCandidates.push({

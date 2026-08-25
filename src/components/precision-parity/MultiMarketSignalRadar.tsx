@@ -3,7 +3,7 @@
 // and emits precise, actionable trade signals:
 // e.g. "Volatility 10 (1s) Index → BUY ODD | Entry Digit: 7 | Setup Valid For: 60s"
 
-import React, { useState } from "react";
+import { useState } from "react";
 import {
   Sparkles,
   Zap,

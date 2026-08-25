@@ -1,7 +1,6 @@
 // Precision Parity & Digit Intelligence Suite Card
 // High-density institutional monitoring panel rendering EV Gate, Conformal Bounds, Bootstrap Significance, 4-State HMM, Particle ESS, CUSUM Drift, and 42-Contract Monte Carlo Simulation.
 
-import React from "react";
 import type { MarketParityReport } from "@/lib/precision-parity/types";
 import {
   ShieldCheck,

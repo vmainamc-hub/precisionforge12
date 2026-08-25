@@ -2,7 +2,7 @@
 // Explicitly documents all 18+ mathematical & statistical engines, their assigned operational roles,
 // and how their outputs fuse cumulatively to generate high-conviction 60-second actionable signals.
 
-import React, { useState } from "react";
+import { useState } from "react";
 import {
   Cpu,
   CheckCircle2,

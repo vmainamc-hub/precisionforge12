@@ -80,7 +80,6 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/_authenticated/app/apex")({
-  ssr: false,
   head: () => ({
     meta: [
       { title: "Apex Sentinel Intelligence — continuous market intelligence" },

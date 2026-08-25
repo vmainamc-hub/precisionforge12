@@ -4,7 +4,8 @@ import { SignificanceGuardEngine, type ComboEvidence } from "../risk/significanc
 import { CircuitBreakerEngine, idleCircuitBreaker } from "../risk/circuit-breaker";
 import { PortfolioExposureEngine } from "../risk/portfolio-exposure";
 import { PositionSizingEngine } from "../risk/position-sizing";
-import { scanNow, DEFAULT_SCAN_OPTIONS } from "../apex/scan";
+import { scanNow, rankOpportunities, DEFAULT_SCAN_OPTIONS } from "../apex/scan";
+import { NearSignalEngine } from "./near-signal";
 import { APEX_UNIVERSE_SYMBOLS } from "../apex/universe";
 import { PROPOSITIONS, type Proposition } from "./observation/constants";
 import type { MarketIntel, ContractEval, RankedOpportunity } from "../apex/types";
@@ -432,3 +433,306 @@ describe("Stage 4 Master Verification Test Suite (Tests 1 - 10)", () => {
     expect(best.bestOfPopulation).toBe(true);
   });
 });
+
+describe("Section 8: Portfolio Exposure — Anti-Phantom Exposure Tests", () => {
+  it("Test A: 1 genuinely executable candidate and 89 WAIT/BLOCKED candidates do not create phantom exposure", () => {
+    const cb = idleCircuitBreaker();
+    const executableCand: Partial<RankedOpportunity> = {
+      symbol: "R_100",
+      contract: {
+        id: "UNDER_7" as any,
+        label: "Under 7",
+        side: "UNDER",
+        theoretical: 0.7,
+        empirical: 0.78,
+        n: 1000,
+        edge: 0.08,
+        edgeLB: 0.06,
+        danger: 15,
+        confidence: 85,
+      } as any,
+      score: 88,
+      entryClearance: { verdict: "CLEARED" } as any,
+      blocked: false,
+    };
+
+    const waitCandidates: Partial<RankedOpportunity>[] = Array.from({ length: 89 }, (_, i) => ({
+      symbol: `R_${(i % 5) * 25 + 10}`,
+      contract: {
+        id: "OVER_2" as any,
+        label: "Over 2",
+        side: "OVER",
+        theoretical: 0.7,
+        empirical: 0.78,
+        n: 1000,
+        edge: 0.08,
+        edgeLB: 0.06,
+        danger: 20,
+        confidence: 80,
+      } as any,
+      score: 75,
+      entryClearance: { verdict: "WAIT" } as any,
+      blocked: false,
+    }));
+
+    const allCandidates = [executableCand as RankedOpportunity, ...waitCandidates as RankedOpportunity[]];
+    const { ranked, exposureReport } = FinalDecisionEngine.evaluateStage4(allCandidates, cb, []);
+
+    // Total proposed exposure must reflect ONLY the 1 cleared candidate, NOT all 90 ($15 * 90 = $1350)
+    expect(exposureReport.totalProposedExposure).toBeLessThanOrEqual(25);
+    expect(exposureReport.recommendation).toBe("OK");
+    expect(ranked[0].finalDecision?.verdict).toBe("CLEARED");
+  });
+
+  it("Test B: Non-executable candidates with large hypothetical stakes cannot cause false TRIM or BLOCK_NEW", () => {
+    const cb = idleCircuitBreaker();
+    const executableCand: Partial<RankedOpportunity> = {
+      symbol: "R_100",
+      contract: {
+        id: "UNDER_7" as any,
+        label: "Under 7",
+        side: "UNDER",
+        theoretical: 0.7,
+        empirical: 0.78,
+        n: 1000,
+        edge: 0.08,
+        edgeLB: 0.06,
+        danger: 15,
+        confidence: 85,
+      } as any,
+      score: 88,
+      entryClearance: { verdict: "CLEARED" } as any,
+      blocked: false,
+    };
+
+    const blockedCandidates: Partial<RankedOpportunity>[] = Array.from({ length: 10 }, (_, i) => ({
+      symbol: "R_75", // Same correlation group
+      contract: {
+        id: "OVER_2" as any,
+        label: "Over 2",
+        side: "OVER",
+        theoretical: 0.7,
+        empirical: 0.78,
+        n: 1000,
+        edge: 0.08,
+        edgeLB: 0.06,
+        danger: 75,
+        confidence: 80,
+      } as any,
+      score: 70,
+      entryClearance: { verdict: "BLOCKED" } as any,
+      blocked: true,
+      clearance: { state: "BLOCKED", label: "BLOCKED", blockers: ["HARD DANGER"], warnings: [] },
+    }));
+
+    const allCandidates = [executableCand as RankedOpportunity, ...blockedCandidates as RankedOpportunity[]];
+    const { ranked, exposureReport } = FinalDecisionEngine.evaluateStage4(allCandidates, cb, []);
+
+    expect(exposureReport.recommendation).toBe("OK");
+    expect(ranked[0].finalDecision?.verdict).toBe("CLEARED");
+  });
+});
+
+describe("Section 20: Diagnostic NEAR-SIGNAL Tests", () => {
+  it("Test A: Strong candidate missing only execution trigger -> NEAR_SIGNAL -> NOT_EXECUTABLE", () => {
+    const strongNearSignalCand: Partial<RankedOpportunity> = {
+      symbol: "R_100",
+      name: "Volatility 100 Index",
+      contract: {
+        id: "UNDER_7" as any,
+        label: "Under 7",
+        side: "UNDER",
+        theoretical: 0.7,
+        empirical: 0.78,
+        n: 1000,
+        edge: 0.08,
+        danger: 25,
+        confidence: 85,
+        winners: [0, 1, 2, 3, 4, 5, 6],
+        regimeCompatible: true,
+        contradiction: 0,
+        conflicts: [],
+      } as any,
+      score: 82,
+      dangerComposition: { total: 25 } as any,
+      agreement: "SUPPORT",
+      direction: { direction: "UNDER", state: "CONFIRMED", consistency: 80 } as any,
+      digitPsychology: { winningSideDominance: true, supportScore: 80 } as any,
+      priceAction: { confirmsStructure: true, losingSidePressure: { state: "NEGLIGIBLE" } } as any,
+      entryPoint: { status: "WAIT", preferred: null, window: { label: "15-20 TICKS" } } as any,
+      signal: { state: "VALID_WAIT_ENTRY", waitForEntry: true } as any,
+      entryClearance: { verdict: "WAIT" } as any,
+      blocked: false,
+      executionReady: false,
+      executionReadyReasons: ["Awaiting entry trigger touch on preferred digit"],
+      finalDecision: {
+        verdict: "WAIT",
+        stage3Verdict: "WAIT",
+        recommendedStake: {} as any,
+        significance: { passesCorrection: true } as any,
+        exposure: null,
+        circuitBreaker: idleCircuitBreaker(),
+        factors: [],
+        summary: "WAIT",
+      },
+    };
+
+    const ns = NearSignalEngine.evaluate(strongNearSignalCand as RankedOpportunity);
+    expect(ns.isNearSignal).toBe(true);
+    expect(ns.verdict).toBe("NEAR_SIGNAL");
+    expect(ns.isExecutable).toBe(false);
+    expect(ns.strengths.length).toBeGreaterThanOrEqual(3);
+    expect(ns.missingConditions.length).toBeGreaterThan(0);
+  });
+
+  it("Test B: Weak psychology/pressure/engine evidence -> NOT_NEAR_SIGNAL", () => {
+    const weakCand: Partial<RankedOpportunity> = {
+      symbol: "R_50",
+      contract: {
+        id: "OVER_2" as any,
+        label: "Over 2",
+        side: "OVER",
+        theoretical: 0.7,
+        empirical: 0.71,
+        n: 1000,
+        edge: 0.01,
+        danger: 40,
+        confidence: 45,
+        winners: [3, 4, 5, 6, 7, 8, 9],
+        regimeCompatible: true,
+        contradiction: 1,
+      } as any,
+      score: 55,
+      dangerComposition: { total: 40 } as any,
+      agreement: "NEUTRAL",
+      direction: { direction: "OVER", state: "WEAK" } as any,
+      digitPsychology: { winningSideDominance: false, supportScore: 35 } as any,
+      priceAction: { confirmsStructure: false, losingSidePressure: { state: "ACTIVE_THREAT" } } as any,
+      entryClearance: { verdict: "WAIT" } as any,
+      blocked: false,
+      executionReady: false,
+      executionReadyReasons: ["Weak setup score"],
+    };
+
+    const ns = NearSignalEngine.evaluate(weakCand as RankedOpportunity);
+    expect(ns.isNearSignal).toBe(false);
+    expect(ns.verdict).toBe("NOT_NEAR_SIGNAL");
+  });
+
+  it("Test C: Strong candidate with active hard veto -> NOT_NEAR_SIGNAL", () => {
+    const vetoedCand: Partial<RankedOpportunity> = {
+      symbol: "R_100",
+      contract: {
+        id: "UNDER_7" as any,
+        label: "Under 7",
+        side: "UNDER",
+        theoretical: 0.7,
+        empirical: 0.78,
+        n: 1000,
+        edge: 0.08,
+        danger: 25,
+        confidence: 85,
+      } as any,
+      score: 82,
+      dangerComposition: { total: 25 } as any,
+      agreement: "SUPPORT",
+      direction: { direction: "UNDER", state: "CONFIRMED" } as any,
+      digitPsychology: { winningSideDominance: true, supportScore: 80 } as any,
+      blocked: true, // Hard veto
+      vetoResolution: { hasVeto: true, vetoes: ["GLOBAL DANGER VETO"] } as any,
+    };
+
+    const ns = NearSignalEngine.evaluate(vetoedCand as RankedOpportunity);
+    expect(ns.isNearSignal).toBe(false);
+    expect(ns.verdict).toBe("NOT_NEAR_SIGNAL");
+    expect(ns.missingConditions).toContain("Active hard veto in place");
+  });
+
+  it("Test D: All mandatory requirements satisfied -> EXECUTABLE state", () => {
+    const executableCand: Partial<RankedOpportunity> = {
+      symbol: "R_100",
+      contract: {
+        id: "UNDER_7" as any,
+        label: "Under 7",
+        side: "UNDER",
+        theoretical: 0.7,
+        empirical: 0.78,
+        n: 1000,
+        edge: 0.08,
+        danger: 20,
+        confidence: 85,
+      } as any,
+      score: 85,
+      dangerComposition: { total: 20 } as any,
+      clearance: { state: "CLEARED", label: "CLEARED", blockers: [], warnings: [] },
+      blocked: false,
+      executionReady: true,
+      finalDecision: { verdict: "CLEARED" } as any,
+    };
+
+    const ns = NearSignalEngine.evaluate(executableCand as RankedOpportunity);
+    expect(ns.isNearSignal).toBe(false);
+    expect(ns.verdict).toBe("EXECUTABLE");
+  });
+
+  it("Test E & F: Stage 4 never promotes Near-Signal and maintains rank order", () => {
+    const nearSignalCand: Partial<RankedOpportunity> = {
+      symbol: "R_100",
+      contract: {
+        id: "UNDER_7" as any,
+        label: "Under 7",
+        side: "UNDER",
+        theoretical: 0.7,
+        empirical: 0.78,
+        n: 1000,
+        edge: 0.08,
+        danger: 25,
+        confidence: 85,
+      } as any,
+      score: 82,
+      entryClearance: { verdict: "WAIT" } as any,
+      blocked: false,
+      executionReady: false,
+    };
+
+    const cb = idleCircuitBreaker();
+    const { ranked } = FinalDecisionEngine.evaluateStage4([nearSignalCand as RankedOpportunity], cb, []);
+
+    // Stage 4 verdict MUST remain WAIT, never upgraded to CLEARED
+    expect(ranked[0].finalDecision?.verdict).toBe("WAIT");
+  });
+});
+
+describe("Section 7: Single Authoritative Stage 4 Call-Graph & Consumer Fidelity", () => {
+  const mockMarkets = APEX_UNIVERSE_SYMBOLS.map((s, idx) =>
+    createMockMarket(s, `${s} Synthetic Index`, (idx * 2) % 10, 1000),
+  );
+
+  it("Prove rankOpportunities performs Stage 4 and decorates all candidates with finalDecision, recommendedStake, and nearSignal", () => {
+    const { ranked, exposureReport, circuitBreaker } = rankOpportunities(mockMarkets);
+
+    expect(ranked.length).toBe(90);
+    expect(exposureReport).toBeDefined();
+    expect(circuitBreaker).toBeDefined();
+
+    for (const cand of ranked) {
+      expect(cand.finalDecision).toBeDefined();
+      expect(cand.recommendedStake).toBeDefined();
+      expect(cand.nearSignal).toBeDefined();
+      expect(cand.finalDecision.circuitBreaker).toBeDefined();
+      expect(cand.finalDecision.significance).toBeDefined();
+    }
+  });
+
+  it("Prove scanNow consumes the Stage-4 decorated ranked output without altering Stage 4 attribution", () => {
+    const scan = scanNow(mockMarkets, DEFAULT_SCAN_OPTIONS);
+
+    expect(scan.bestOf90).not.toBeNull();
+    expect(scan.bestOf90!.finalDecision).toBeDefined();
+    expect(scan.bestOf90!.recommendedStake).toBeDefined();
+    expect(scan.bestOf90!.nearSignal).toBeDefined();
+    expect(scan.bestOf90!.candidate.finalDecision).toBe(scan.bestOf90!.finalDecision);
+  });
+});
+
+

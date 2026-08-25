@@ -372,6 +372,8 @@ export interface RankedOpportunity {
   finalDecision?: import("@/types/sentinel").FinalDecision;
   /** STAGE 4 — Recommended fractional-Kelly stake report. */
   recommendedStake?: import("@/types/sentinel").PositionSizeReport;
+  /** DIAGNOSTIC — Near-Signal classification explaining strengths and missing execution condition. */
+  nearSignal?: import("../sentinel/near-signal").NearSignalAssessment | null;
 }
 
 /** One transparent, signed contribution to a market's ranking score. */
@@ -404,6 +406,8 @@ export interface BestOf90Result {
   finalDecision?: import("@/types/sentinel").FinalDecision | null;
   /** STAGE 4 — Recommended fractional-Kelly stake for the Best-of-90 candidate. */
   recommendedStake?: import("@/types/sentinel").PositionSizeReport | null;
+  /** DIAGNOSTIC — Near-Signal classification for the Best-of-90 candidate. */
+  nearSignal?: import("../sentinel/near-signal").NearSignalAssessment | null;
 }
 
 export interface ScanResult {

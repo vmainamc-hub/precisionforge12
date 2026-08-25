@@ -3,7 +3,6 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React from "react";
 import {
   PropositionObservationState,
   MarketObservationState,
@@ -42,13 +41,13 @@ interface ObservationWindowPanelProps {
   compact?: boolean;
 }
 
-export const ObservationWindowPanel: React.FC<ObservationWindowPanelProps> = ({
+export function ObservationWindowPanel({
   observationState,
   marketObservation,
   marketSymbol,
   contract,
   compact = false,
-}) => {
+}: ObservationWindowPanelProps) {
   if (!observationState) {
     return (
       <div className="p-4 rounded-xl bg-slate-900/60 border border-slate-800 text-slate-400 text-xs flex items-center gap-2 font-mono">

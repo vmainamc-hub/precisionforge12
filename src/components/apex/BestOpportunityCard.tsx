@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import { useState, type RefObject } from "react";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -33,7 +33,7 @@ export interface BestOpportunityCardProps {
   item: RankedOpportunity;
   bestOf90?: BestOf90Result | null;
   alerts: OpportunityAlertsState;
-  cardRef?: React.RefObject<HTMLDivElement | null>;
+  cardRef?: RefObject<HTMLDivElement | null>;
   focused?: boolean;
   alertStale?: boolean;
 }
@@ -264,6 +264,54 @@ export function BestOpportunityCard({
                     </span>
                   </li>
                 )}
+              </ul>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── NEAR-SIGNAL DIAGNOSTIC PANEL ── */}
+      {(item.nearSignal?.isNearSignal || bestOf90?.nearSignal?.isNearSignal) && (
+        <div className="mt-4 rounded-lg border border-[var(--neon)]/60 bg-[color-mix(in_oklab,var(--neon)_6%,transparent)] p-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Crosshair size={16} className="text-[var(--neon)]" />
+              <span className="font-mono text-xs font-bold uppercase tracking-[0.2em] text-[var(--neon)]">
+                DIAGNOSTIC CLASSIFICATION: NEAR-SIGNAL
+              </span>
+            </div>
+            <span className="rounded bg-[var(--neon)]/20 px-2 py-0.5 font-mono text-[10px] font-bold text-[var(--neon)]">
+              NOT EXECUTABLE
+            </span>
+          </div>
+          <p className="mt-2 text-xs text-foreground/90">
+            Candidate demonstrates strong multi-engine alignment but is held pending a narrow execution condition.
+          </p>
+          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+            <div>
+              <span className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
+                Stack Strengths:
+              </span>
+              <ul className="mt-1 space-y-0.5 text-xs text-foreground">
+                {(item.nearSignal ?? bestOf90?.nearSignal)?.strengths.map((s, idx) => (
+                  <li key={idx} className="flex items-center gap-1.5">
+                    <CheckCircle2 size={12} className="text-[var(--bull)] shrink-0" />
+                    <span>{s}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+            <div>
+              <span className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
+                Missing Condition(s):
+              </span>
+              <ul className="mt-1 space-y-0.5 text-xs text-foreground">
+                {(item.nearSignal ?? bestOf90?.nearSignal)?.missingConditions.map((m, idx) => (
+                  <li key={idx} className="flex items-center gap-1.5">
+                    <Clock size={12} className="text-[var(--warn)] shrink-0" />
+                    <span>{m}</span>
+                  </li>
+                ))}
               </ul>
             </div>
           </div>

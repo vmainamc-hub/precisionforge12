@@ -79,13 +79,13 @@ function extractEvidence(c: any): ComboEvidence {
   // 2. OpportunityCandidate branch
   const cand = c as OpportunityCandidate;
   const sampleSize = Math.max(0, cand.canonicalState?.totalTicks || 0);
-  const p0 = cand.barrier != null ? (cand.direction === "OVER" ? (9 - cand.barrier) / 10 : cand.barrier / 10) : 0.7;
-  const measuredEdge = Number((cand.absoluteEdge ?? 0).toFixed(2));
-  const pEmp = p0 + measuredEdge / 100;
+  const p0 = cand.barrier != null ? (cand.direction === "OVER" ? (9 - cand.barrier) / 10 : cand.barrier / 10) : 0;
+  const measuredEdge = p0 > 0 ? Number((cand.absoluteEdge ?? 0).toFixed(2)) : 0;
+  const pEmp = p0 > 0 ? p0 + measuredEdge / 100 : 0;
   const rawWilsonLower = cand.entryTrigger?.wilsonLowerBound
     ? Number(cand.entryTrigger.wilsonLowerBound.toFixed(2))
     : Number((p0 * 100).toFixed(2));
-  const pVal = computeBinomialPValue(pEmp, p0, sampleSize);
+  const pVal = p0 > 0 && sampleSize > 0 ? computeBinomialPValue(pEmp, p0, sampleSize) : 1.0;
   const comboKey = cand.id || `${cand.market}:${cand.contract}`;
 
   return {
@@ -177,15 +177,15 @@ export class FinalDecisionEngine {
         } else if (r.survival?.sufficient && (r.survival.run1WinRate ?? 0) > 0) {
           empiricalWinRate = r.survival.run1WinRate! * 100;
         }
-        payout = r.contract.theoretical > 0 ? Number((0.97 / r.contract.theoretical).toFixed(2)) : 1.38;
+        payout = r.contract.theoretical > 0 ? Number((0.97 / r.contract.theoretical).toFixed(2)) : 0;
         sampleTicks = r.contract.n || r.intel?.ticks || 0;
         confidence = r.evidence?.confidence ?? r.contract.confidence ?? 0;
         opportunityScore = r.score ?? 0;
       } else {
         const oc = cand as OpportunityCandidate;
-        const p0 = oc.barrier != null ? (oc.direction === "OVER" ? (9 - oc.barrier) / 10 : oc.barrier / 10) : 0.7;
+        const p0 = oc.barrier != null ? (oc.direction === "OVER" ? (9 - oc.barrier) / 10 : oc.barrier / 10) : 0;
         empiricalWinRate = oc.survivalMetrics?.run1WinRate ?? p0 * 100;
-        payout = p0 > 0 ? Number((0.97 / p0).toFixed(2)) : 1.38;
+        payout = p0 > 0 ? Number((0.97 / p0).toFixed(2)) : 0;
         sampleTicks = oc.canonicalState?.totalTicks || 0;
         confidence = oc.confidence ?? 0;
         opportunityScore = oc.opportunityScore ?? 0;
@@ -203,7 +203,7 @@ export class FinalDecisionEngine {
       // Check Multiple Testing Significance
       const sigAssessment: SignificanceAssessment = significanceMap.get(candKey) || {
         comboKey: candKey,
-        rawWilsonLower: 0.7,
+        rawWilsonLower: 0,
         fdrAdjustedThreshold: 0.05,
         passesCorrection: false,
         activeComparisons: candidates.length,
