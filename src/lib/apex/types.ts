@@ -368,6 +368,10 @@ export interface RankedOpportunity {
   executionReady?: boolean;
   /** §35 Specific reasons when executionReady is false. */
   executionReadyReasons?: string[];
+  /** STAGE 4 — Risk-integrated final decision (Never-Upgrade, Multiple-Testing, Sizing, Exposure). */
+  finalDecision?: import("@/types/sentinel").FinalDecision;
+  /** STAGE 4 — Recommended fractional-Kelly stake report. */
+  recommendedStake?: import("@/types/sentinel").PositionSizeReport;
 }
 
 /** One transparent, signed contribution to a market's ranking score. */
@@ -396,6 +400,10 @@ export interface BestOf90Result {
   executionReadyReasons: string[];
   waitForEntry: boolean;
   analyzedAt: number;
+  /** STAGE 4 — Final risk-integrated decision for the Best-of-90 candidate. */
+  finalDecision?: import("@/types/sentinel").FinalDecision | null;
+  /** STAGE 4 — Recommended fractional-Kelly stake for the Best-of-90 candidate. */
+  recommendedStake?: import("@/types/sentinel").PositionSizeReport | null;
 }
 
 export interface ScanResult {
@@ -411,4 +419,8 @@ export interface ScanResult {
   rejected: { symbol: string; contract: string; reason: string }[];
   verdict: "OPPORTUNITY" | "MODERATE" | "NONE" | "DATA_UNAVAILABLE";
   message: string;
+  /** STAGE 4 — Portfolio exposure report across all 90 evaluated cells. */
+  exposureReport?: import("@/types/sentinel").PortfolioExposureReport | null;
+  /** STAGE 4 — Active session circuit breaker state. */
+  circuitBreaker?: import("@/types/sentinel").CircuitBreakerState | null;
 }

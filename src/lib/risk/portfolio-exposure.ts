@@ -12,8 +12,8 @@ import type { OpportunityCandidate, PortfolioExposureReport } from "@/types/sent
 export const PORTFOLIO_CEILING = 60;
 export const GROUP_CEILING = 25;
 
-export interface HeldCandidate {
-  candidate: OpportunityCandidate;
+export interface HeldCandidate<T = any> {
+  candidate: T;
   reason: string;
 }
 
@@ -28,17 +28,39 @@ export function correlationGroup(market: string): string {
   return "OTHER";
 }
 
+function getCandidateKey(c: any): string {
+  if (c.id) return String(c.id);
+  const sym = c.symbol ?? c.market ?? "UNKNOWN";
+  const contractId = typeof c.contract === "object" ? c.contract?.id : c.contract;
+  return `${sym}:${contractId ?? "CONTRACT"}`;
+}
+
+function getCandidateMarket(c: any): string {
+  return c.symbol ?? c.market ?? "";
+}
+
+function getCandidateScore(c: any): number {
+  return c.score ?? c.opportunityScore ?? 0;
+}
+
+function getCandidateContractLabel(c: any): string {
+  if (typeof c.contract === "object") {
+    return c.contract?.label ?? c.contract?.id ?? "CONTRACT";
+  }
+  return String(c.contract ?? "CONTRACT");
+}
+
 export class PortfolioExposureEngine {
-  public static evaluateExposure(
-    candidates: OpportunityCandidate[],
+  public static evaluateExposure<T = OpportunityCandidate>(
+    candidates: T[],
     openPositions: { market: string; stake: number }[] = [],
-  ): { report: PortfolioExposureReport; heldCandidates: HeldCandidate[] } {
+  ): { report: PortfolioExposureReport; heldCandidates: HeldCandidate<T>[] } {
     const groups = new Map<
       string,
-      { combined: number; members: string[]; candidates: OpportunityCandidate[] }
+      { combined: number; members: string[]; candidates: T[] }
     >();
 
-    const bump = (market: string, stake: number, member: string, cand?: OpportunityCandidate) => {
+    const bump = (market: string, stake: number, member: string, cand?: T) => {
       const g = correlationGroup(market);
       const entry = groups.get(g) ?? { combined: 0, members: [], candidates: [] };
       entry.combined += stake;
@@ -48,21 +70,23 @@ export class PortfolioExposureEngine {
     };
 
     for (const p of openPositions) bump(p.market, p.stake, `open:${p.market}`);
-    for (const c of candidates) {
+    for (const c of candidates as any[]) {
       const stake = c.recommendedStake?.drawdownAdjustedStake ?? 0;
-      bump(c.market, stake, `${c.market} ${c.contract}`, c);
+      const market = getCandidateMarket(c);
+      const label = getCandidateContractLabel(c);
+      bump(market, stake, `${market} ${label}`, c);
     }
 
-    const heldCandidates: HeldCandidate[] = [];
+    const heldCandidates: HeldCandidate<T>[] = [];
     const byCorrelationGroup = [...groups.entries()].map(([group, e]) => {
       const breached = e.combined > GROUP_CEILING;
       if (breached) {
         // Hold the weakest candidates in the group until the group fits.
-        const ordered = [...e.candidates].sort((a, b) => a.opportunityScore - b.opportunityScore);
+        const ordered = [...e.candidates].sort((a, b) => getCandidateScore(a) - getCandidateScore(b));
         let running = e.combined;
         for (const cand of ordered) {
           if (running <= GROUP_CEILING) break;
-          const stake = cand.recommendedStake?.drawdownAdjustedStake ?? 0;
+          const stake = (cand as any).recommendedStake?.drawdownAdjustedStake ?? 0;
           running -= stake;
           heldCandidates.push({
             candidate: cand,
@@ -88,7 +112,8 @@ export class PortfolioExposureEngine {
 
     if (recommendation === "BLOCK_NEW") {
       for (const cand of candidates) {
-        if (heldCandidates.some((h) => h.candidate.id === cand.id)) continue;
+        const key = getCandidateKey(cand);
+        if (heldCandidates.some((h) => getCandidateKey(h.candidate) === key)) continue;
         heldCandidates.push({
           candidate: cand,
           reason: `Total proposed exposure $${totalProposedExposure.toFixed(2)} exceeds the $${PORTFOLIO_CEILING.toFixed(2)} portfolio ceiling.`,

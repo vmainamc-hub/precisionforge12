@@ -119,6 +119,9 @@ export function BestOpportunityCard({
       instructionDetail: item.signal?.instruction?.detail ?? "",
       operatorSurfaceGate: gate.qualified ? "QUALIFIED" : "NOT_QUALIFIED",
       executionReady: isExecutionReady,
+      stage4Verdict: item.finalDecision?.verdict ?? "EVALUATING",
+      stage4Significance: item.finalDecision?.significance?.passesCorrection ? "PASSED" : "UNCONFIRMED",
+      recommendedStake: item.recommendedStake?.drawdownAdjustedStake ?? 1.0,
       disclaimer: "DBot Handoff is an analytical blueprint only. Does not place automatic trades.",
     };
 
@@ -696,6 +699,90 @@ export function BestOpportunityCard({
           </div>
         </div>
       </div>
+
+      {/* ── 6.5 STAGE 4 RISK-INTEGRATED FINAL DECISION & FRACTIONAL-KELLY SIZING ── */}
+      {item.finalDecision && (
+        <div className="mt-6 rounded-lg border border-border/60 bg-background/50 p-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="font-mono text-[10px] font-bold uppercase tracking-[0.25em] text-[var(--neon)]">
+              STAGE 4 · RISK INTEGRATION &amp; FRACTIONAL-KELLY SIZING
+            </div>
+            <span
+              className="rounded px-2 py-0.5 font-mono text-[11px] font-semibold uppercase tracking-wider"
+              style={{
+                backgroundColor:
+                  item.finalDecision.verdict === "CLEARED"
+                    ? "var(--bull-subtle, rgba(34, 197, 94, 0.15))"
+                    : "var(--bear-subtle, rgba(239, 68, 68, 0.15))",
+                color:
+                  item.finalDecision.verdict === "CLEARED"
+                    ? "var(--bull, #22c55e)"
+                    : "var(--bear, #ef4444)",
+              }}
+            >
+              {item.finalDecision.verdict}
+            </span>
+          </div>
+
+          <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="rounded border border-border/40 bg-background/30 p-2.5">
+              <div className="font-mono text-[9px] uppercase tracking-wider text-muted-foreground">
+                Significance Guard (FDR &amp; MES)
+              </div>
+              <div className="mt-1 font-mono text-sm font-bold text-foreground">
+                {item.finalDecision.significance.passesCorrection ? "PASSED (HONEST)" : "UNCONFIRMED"}
+              </div>
+              <div className="mt-0.5 text-[10px] text-muted-foreground">
+                p = {item.finalDecision.significance.fdrAdjustedThreshold.toFixed(4)} threshold across {item.finalDecision.significance.activeComparisons} cells
+              </div>
+            </div>
+
+            <div className="rounded border border-border/40 bg-background/30 p-2.5">
+              <div className="font-mono text-[9px] uppercase tracking-wider text-muted-foreground">
+                Recommended Stake
+              </div>
+              <div className="mt-1 font-mono text-sm font-bold text-[var(--bull,#22c55e)]">
+                ${item.finalDecision.recommendedStake.drawdownAdjustedStake.toFixed(2)}
+              </div>
+              <div className="mt-0.5 text-[10px] text-muted-foreground">
+                Kelly {(item.finalDecision.recommendedStake.kellyFraction * 100).toFixed(1)}% · Max Drawdown {item.finalDecision.recommendedStake.drawdownMultiplier.toFixed(2)}x
+              </div>
+            </div>
+
+            <div className="rounded border border-border/40 bg-background/30 p-2.5">
+              <div className="font-mono text-[9px] uppercase tracking-wider text-muted-foreground">
+                Circuit Breaker State
+              </div>
+              <div className="mt-1 font-mono text-sm font-bold text-foreground">
+                {item.finalDecision.circuitBreaker.tripped ? "TRIPPED (HALT)" : "NOMINAL"}
+              </div>
+              <div className="mt-0.5 text-[10px] text-muted-foreground">
+                {item.finalDecision.circuitBreaker.reason || "Session risk within normal boundaries"}
+              </div>
+            </div>
+
+            <div className="rounded border border-border/40 bg-background/30 p-2.5">
+              <div className="font-mono text-[9px] uppercase tracking-wider text-muted-foreground">
+                Portfolio Exposure
+              </div>
+              <div className="mt-1 font-mono text-sm font-bold text-foreground">
+                {item.finalDecision.exposure
+                  ? `${item.finalDecision.exposure.recommendation}`
+                  : "WITHIN LIMITS"}
+              </div>
+              <div className="mt-0.5 text-[10px] text-muted-foreground">
+                {item.finalDecision.exposure
+                  ? `$${item.finalDecision.exposure.totalProposedExposure.toFixed(2)} proposed / $${item.finalDecision.exposure.limits.maxTotalPortfolioExposure.toFixed(0)} cap`
+                  : "Correlation groups below maximum exposure ceiling"}
+              </div>
+            </div>
+          </div>
+
+          <p className="mt-2 text-xs text-muted-foreground font-mono">
+            {item.finalDecision.summary}
+          </p>
+        </div>
+      )}
 
       {/* ── 7. WHY #1 WON — ATTRIBUTION BREAKDOWN ── */}
       <div className="mt-6 rounded-lg border border-border/60 bg-background/40 p-4">

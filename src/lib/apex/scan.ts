@@ -7,7 +7,7 @@
 
 import { apexCore } from "./core";
 import { marketProfiles } from "./profiles";
-import { confirmedTrades } from "../sentinel/trade-feedback";
+import { confirmedTrades, listPendingTrades } from "../sentinel/trade-feedback";
 import { calibrateScore } from "../sentinel/calibration";
 import { sequentialTestFromEdge } from "../sentinel/sequential-test";
 import { resolveSignalState } from "../sentinel/signal-state";
@@ -32,6 +32,8 @@ import type { EntryClearanceReport } from "../sentinel/entry-clearance";
 import type { RelativeEdgeReport } from "../sentinel/relative-edge";
 import type { PersistenceReport } from "../sentinel/scan-memory";
 import { operatorSurfaceGate } from "./operator-surface-gate";
+import { FinalDecisionEngine } from "../sentinel/final-decision";
+import { CircuitBreakerEngine } from "../risk/circuit-breaker";
 
 export interface ScanOptions {
   /** Extra score awarded to Under 7 / Over 2 — the operator's primary
@@ -618,9 +620,46 @@ export function rankOpportunities(
     };
   });
 
+  // ── STAGE 4 RISK INTEGRATION ON THE FULL CANDIDATE POPULATION ──
+  const pastTradeList = confirmedTrades();
+  let consecutiveLosses = 0;
+  for (let i = pastTradeList.length - 1; i >= 0; i--) {
+    if (pastTradeList[i].outcome === "LOSS") {
+      consecutiveLosses++;
+    } else if (pastTradeList[i].outcome === "WIN") {
+      break;
+    }
+  }
+
+  let peakPnl = 0;
+  let runningPnl = 0;
+  let maxDrawdown = 0;
+  for (const t of pastTradeList) {
+    const pnl = t.outcome === "WIN" ? (t.stake ?? 1) * 0.38 : -(t.stake ?? 1);
+    runningPnl += pnl;
+    if (runningPnl > peakPnl) peakPnl = runningPnl;
+    const dd = peakPnl - runningPnl;
+    if (dd > maxDrawdown) maxDrawdown = dd;
+  }
+  const sessionDrawdownPct = peakPnl > 0 ? (maxDrawdown / peakPnl) * 100 : 0;
+  const gd = globalDanger(intels);
+  const circuitBreaker = CircuitBreakerEngine.evaluate({
+    consecutiveLosses,
+    sessionDrawdownPct,
+    sustainedGlobalDanger: gd,
+  });
+
+  const openPositions = listPendingTrades().map((t) => ({
+    market: t.snapshot.symbol,
+    stake: t.stake ?? 1,
+  }));
+
+  const stage4 = FinalDecisionEngine.evaluateStage4(ranked, circuitBreaker, openPositions);
+  const finalRanked = stage4.ranked;
+
   if (recordHistory) {
     scanMemory.record(
-      ranked.map((r) => ({
+      finalRanked.map((r) => ({
         key: `${r.symbol}:${r.contract.id}`,
         symbol: r.symbol,
         name: r.name,
@@ -641,7 +680,7 @@ export function rankOpportunities(
     );
   }
 
-  return { ranked, rejected };
+  return { ranked: finalRanked, rejected };
 }
 
 export function scanNow(
@@ -652,19 +691,55 @@ export function scanNow(
   const { ranked, rejected } = rankOpportunities(intels, opts, true);
   const gd = globalDanger(intels);
 
-  // STRICT OPERATOR SURFACE GATE — Only candidates meeting all 9 gates are surfaced in top.
-  // 90 cells remain fully evaluated in 'ranked' for internal observation.
-  const qualified = ranked.filter((r) => {
+  // Compute live circuit breaker & open positions to obtain full exposureReport
+  const pastTradeList = confirmedTrades();
+  let consecutiveLosses = 0;
+  for (let i = pastTradeList.length - 1; i >= 0; i--) {
+    if (pastTradeList[i].outcome === "LOSS") {
+      consecutiveLosses++;
+    } else if (pastTradeList[i].outcome === "WIN") {
+      break;
+    }
+  }
+  let peakPnl = 0;
+  let runningPnl = 0;
+  let maxDrawdown = 0;
+  for (const t of pastTradeList) {
+    const pnl = t.outcome === "WIN" ? (t.stake ?? 1) * 0.38 : -(t.stake ?? 1);
+    runningPnl += pnl;
+    if (runningPnl > peakPnl) peakPnl = runningPnl;
+    const dd = peakPnl - runningPnl;
+    if (dd > maxDrawdown) maxDrawdown = dd;
+  }
+  const sessionDrawdownPct = peakPnl > 0 ? (maxDrawdown / peakPnl) * 100 : 0;
+  const circuitBreaker = CircuitBreakerEngine.evaluate({
+    consecutiveLosses,
+    sessionDrawdownPct,
+    sustainedGlobalDanger: gd,
+  });
+  const openPositions = listPendingTrades().map((t) => ({
+    market: t.snapshot.symbol,
+    stake: t.stake ?? 1,
+  }));
+
+  const stage4 = FinalDecisionEngine.evaluateStage4(ranked, circuitBreaker, openPositions);
+  const finalRanked = stage4.ranked;
+
+  // STRICT OPERATOR SURFACE GATE + STAGE 4 QUALIFICATION
+  // Only candidates meeting all 9 operator gates AND cleared by Stage 4 are surfaced in top.
+  const qualified = finalRanked.filter((r) => {
     const gate = operatorSurfaceGate(r, r.intel, {
       minScore: opts.opportunityThreshold,
     });
-    return gate.qualified;
+    const stage4Cleared = r.finalDecision?.verdict === "CLEARED";
+    return gate.qualified && stage4Cleared;
   });
 
   // NO UNQUALIFIED FALLBACKS — If no candidate is qualified, top is strictly empty.
   const top = qualified.slice(0, 5);
 
-  const leadCandidate = ranked.length > 0 ? ranked[0] : null;
+  // The Best-of-90 candidate is the top qualified candidate, or if none qualified, the #1 ranked candidate with full non-qualified attribution
+  const leadCandidate = qualified.length > 0 ? qualified[0] : finalRanked.length > 0 ? finalRanked[0] : null;
   let bestOf90: BestOf90Result | null = null;
   if (leadCandidate) {
     const gate = operatorSurfaceGate(leadCandidate, leadCandidate.intel, {
@@ -674,6 +749,7 @@ export function scanNow(
       leadCandidate.blocked ||
         (leadCandidate.dangerComposition?.total ?? 0) > 45 ||
         leadCandidate.clearance?.state === "BLOCKED" ||
+        leadCandidate.finalDecision?.verdict === "BLOCKED" ||
         gate.blockers.some(
           (b) =>
             b.includes("DANGER") ||
@@ -683,8 +759,18 @@ export function scanNow(
         ),
     );
 
+    const allBlockers = [...gate.blockers];
+    if (leadCandidate.finalDecision && leadCandidate.finalDecision.verdict !== "CLEARED") {
+      if (leadCandidate.finalDecision.summary && !allBlockers.includes(leadCandidate.finalDecision.summary)) {
+        allBlockers.push(leadCandidate.finalDecision.summary);
+      }
+    }
+
+    const isStage4Cleared = leadCandidate.finalDecision?.verdict === "CLEARED";
+    const isFullyQualified = gate.qualified && isStage4Cleared;
+
     let status: BestOf90Status;
-    if (!gate.qualified) {
+    if (!isFullyQualified) {
       status = isHardBlocked ? "BEST OF 90 — BLOCKED" : "BEST OF 90 — NOT QUALIFIED";
     } else if (leadCandidate.executionReady) {
       status = "BEST OF 90 — EXECUTION READY";
@@ -702,18 +788,20 @@ export function scanNow(
 
     bestOf90 = {
       rank: 1,
-      populationSize: ranked.length,
+      populationSize: finalRanked.length,
       bestOfPopulation: true,
       candidate: leadCandidate,
       status,
-      qualified: gate.qualified,
-      blockers: gate.blockers,
-      executionReady: Boolean(leadCandidate.executionReady),
+      qualified: isFullyQualified,
+      blockers: allBlockers,
+      executionReady: Boolean(leadCandidate.executionReady && isStage4Cleared),
       executionReadyReasons: leadCandidate.executionReadyReasons ?? [],
       waitForEntry: Boolean(
         leadCandidate.signal?.waitForEntry || !leadCandidate.entryPoint.preferred,
       ),
       analyzedAt: Date.now(),
+      finalDecision: leadCandidate.finalDecision,
+      recommendedStake: leadCandidate.recommendedStake,
     };
   }
 
@@ -735,7 +823,7 @@ export function scanNow(
     scannedAt: Date.now(),
     marketsOnline: online.length,
     marketsTotal: intels.length,
-    evaluated: ranked.length,
+    evaluated: finalRanked.length,
     globalDanger: gd,
     globalDangerLabel: gd < 35 ? "CALM" : gd < 65 ? "ELEVATED" : "HOSTILE",
     top,
@@ -744,6 +832,8 @@ export function scanNow(
     rejected: rejected.slice(0, 40),
     verdict,
     message,
+    exposureReport: stage4.exposureReport,
+    circuitBreaker,
   };
 }
 
