@@ -302,48 +302,6 @@ export type Database = {
         }
         Relationships: []
       }
-      parity_signals: {
-        Row: {
-          action: string
-          confidence: number | null
-          created_at: string
-          entry_formula: string | null
-          expires_at: string | null
-          id: string
-          market: string
-          outcome: string
-          published_at: string | null
-          resolved_at: string | null
-          user_id: string | null
-        }
-        Insert: {
-          action: string
-          confidence?: number | null
-          created_at?: string
-          entry_formula?: string | null
-          expires_at?: string | null
-          id: string
-          market: string
-          outcome?: string
-          published_at?: string | null
-          resolved_at?: string | null
-          user_id?: string | null
-        }
-        Update: {
-          action?: string
-          confidence?: number | null
-          created_at?: string
-          entry_formula?: string | null
-          expires_at?: string | null
-          id?: string
-          market?: string
-          outcome?: string
-          published_at?: string | null
-          resolved_at?: string | null
-          user_id?: string | null
-        }
-        Relationships: []
-      }
       profiles: {
         Row: {
           created_at: string
