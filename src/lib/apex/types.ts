@@ -362,6 +362,8 @@ export interface RankedOpportunity {
   qualityBand?: import("@/lib/sentinel/observation/selectivity").QualityBand;
   /** Reliability state of calibration statistics when present. */
   reliabilityState?: string;
+  /** Lower-timeframe losing side pressure index, modifier, and state. */
+  losingSidePressure?: import("../sentinel/price-action-psychology").LosingSidePressure | null;
   /** §35 Additive 4-condition Execution Ready boolean for DBot / execution handoff. */
   executionReady?: boolean;
   /** §35 Specific reasons when executionReady is false. */

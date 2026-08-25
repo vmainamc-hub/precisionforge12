@@ -95,7 +95,7 @@ export function assessInstability(intel: MarketIntel): InstabilityReport {
   // Competing pressure: a suppressed digit surging while a dominant one
   // collapses is exactly the "losing digit fighting a gaining digit" pattern.
   const p = intel.pressure;
-  if (p) {
+  if (p && Array.isArray(p.pressure)) {
     const rising = p.pressure.map((v, d) => ({ d, v })).filter((x) => x.v > 1.4);
     const falling = p.pressure.map((v, d) => ({ d, v })).filter((x) => x.v < -1.4);
     if (rising.length >= 2 && falling.length >= 2) {
@@ -149,18 +149,18 @@ export function digitDanger(
   if (DANGER_DIGITS.includes(digit)) drivers.push(`Digit ${digit} is under elevated monitoring.`);
 
   const p = intel.pressure;
-  if (p) {
+  if (p && Array.isArray(p.pressure)) {
     const press = p.pressure[digit] ?? 0;
     if (press > 1.2) {
       score += Math.min(28, press * 9);
       drivers.push(`Pressure +${press.toFixed(1)}pp and rising.`);
     }
-    const impulse = p.impulse[digit] ?? 0;
+    const impulse = Array.isArray(p.impulse) ? (p.impulse[digit] ?? 0) : 0;
     if (impulse > 1.5) {
       score += Math.min(20, impulse * 6);
       drivers.push(`Fast impulse +${impulse.toFixed(1)}pp — unusual acceleration.`);
     }
-    if ((p.lifecycle[digit] ?? "neutral") === "emerging" && (intel.stats?.pct[digit] ?? 10) < 10) {
+    if (Array.isArray(p.lifecycle) && (p.lifecycle[digit] ?? "neutral") === "emerging" && (intel.stats?.pct[digit] ?? 10) < 10) {
       score += 10;
       drivers.push(`Suppressed digit emerging from below 10%.`);
     }

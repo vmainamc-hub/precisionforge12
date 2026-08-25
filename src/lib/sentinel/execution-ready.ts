@@ -8,7 +8,7 @@
  * 1. Structural direction settled (not CONFLICT/UNKNOWN), matches contract side,
  *    and contract direction score computed with spine wired in (not AGAINST).
  * 2. Danger is low (CALM or LOW) and isHardBlocked is false.
- * 3. Digit trend confirms side (MOST INCREASING in winning zone, MOST DECREASING in losing zone).
+ * 3. Digit trend confirms side (MOST INCREASING in winning zone; MOST DECREASING is contextual evidence).
  * 4. Entry is armed (status is ARMED or ENTER NOW, confidence >= 60, zero unmet clearance requirements,
  *    verdict !== "BLOCKED").
  */
@@ -106,30 +106,22 @@ export function evaluateExecutionReady(input: ExecutionReadyInput): ExecutionRea
   }
 
   // 3. Digit Trend Confirms the Side
+  // Most-increasing digit gaining inside the winning zone confirms the directional trend.
+  // The most-decreasing digit is contextual evidence (evaluating share decay across 0-9)
+  // and is NOT a hard positional requirement to sit in the losing zone.
   const mostIncreasing =
     input.canonicalState?.mostIncreasing ??
     input.digitPsychology?.mostIncreasing ??
     input.digitPsychology?.canonicalState?.mostIncreasing ??
     null;
-  const mostDecreasing =
-    input.canonicalState?.mostDecreasing ??
-    input.digitPsychology?.mostDecreasing ??
-    input.digitPsychology?.canonicalState?.mostDecreasing ??
-    null;
 
   const incInWinners = mostIncreasing !== null && input.winners.includes(mostIncreasing);
-  const decInLosers = mostDecreasing !== null && input.losers.includes(mostDecreasing);
-  const digitTrendConfirmed = Boolean(incInWinners && decInLosers);
+  const digitTrendConfirmed = Boolean(incInWinners);
 
   if (!digitTrendConfirmed) {
     if (mostIncreasing === null || !incInWinners) {
       reasons.push(
         `Digit trend unconfirmed: most increasing digit (${mostIncreasing ?? "none"}) is not in winning zone [${input.winners.join(", ")}].`,
-      );
-    }
-    if (mostDecreasing === null || !decInLosers) {
-      reasons.push(
-        `Digit trend unconfirmed: most decreasing digit (${mostDecreasing ?? "none"}) is not in losing zone [${input.losers.join(", ")}].`,
       );
     }
   }

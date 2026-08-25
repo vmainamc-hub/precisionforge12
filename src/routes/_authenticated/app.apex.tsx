@@ -56,6 +56,7 @@ import { useOpportunityAlerts } from "@/hooks/useOpportunityAlerts";
 import { isExpired, opportunityKey, qualify } from "@/lib/sentinel/opportunity-alert";
 import { operatorSurfaceGate } from "@/lib/apex/operator-surface-gate";
 
+import { BestOpportunityCard } from "@/components/apex/BestOpportunityCard";
 import {
   DEFAULT_EXECUTION,
   loadExecutionSettings,
@@ -127,10 +128,15 @@ function ApexPage() {
   }, [alerts.episode, alerts.config, apex.ranked]);
 
   const alertStale = !!alerts.episode && !alertedLive;
-  // FROZEN SCAN RESULT — strictly qualified candidates only.
-  // If no candidate is qualified, best is strictly null. No apex.ranked[0] fallback!
+  // AUTHORITATIVE BEST CANDIDATE — consumes fully hydrated Best-of-90 candidate.
+  // Gated or non-qualified candidates remain visible with honest blockers and full evidence.
+  const bestOf90 = apex.scan?.bestOf90 ?? null;
   const best =
-    (apex.scan?.top && apex.scan.top.length > 0 ? apex.scan.top[0] : null) ?? alertedLive ?? null;
+    bestOf90?.candidate ??
+    (apex.scan?.top && apex.scan.top.length > 0 ? apex.scan.top[0] : null) ??
+    apex.scan?.best ??
+    alertedLive ??
+    (apex.ranked.length > 0 ? apex.ranked[0] : null);
 
   // AUTOMATIC VISUAL FOCUS — sound → look at screen → see the exact signal.
   const latestAlertId = alerts.latest?.id ?? null;
@@ -309,6 +315,7 @@ function ApexPage() {
               <>
                 <BestOpportunity
                   item={best}
+                  bestOf90={bestOf90}
                   alerts={alerts}
                   cardRef={bestRef}
                   focused={focusPulse}
@@ -628,158 +635,28 @@ function PhaseBadge({ phase }: { phase: string }) {
 
 function BestOpportunity({
   item,
+  bestOf90,
   alerts,
   cardRef,
   focused,
   alertStale,
 }: {
   item: RankedOpportunity;
+  bestOf90?: BestOf90Result | null;
   alerts: ReturnType<typeof useOpportunityAlerts>;
   cardRef?: React.RefObject<HTMLDivElement | null>;
   focused?: boolean;
   alertStale?: boolean;
 }) {
-  const c = item.contract;
-  const sim = item.simulator;
-  const simWins = sim && sim.n ? Math.round(sim.winRate * sim.n) : 0;
-  const ep = item.entryPoint;
-  const d = ep.preferred;
-  const waitForEntry = item.signal?.waitForEntry ?? !d;
-  const entryDigitText = d && !waitForEntry ? String(d.digit) : "WAIT";
-  const surv = item.survival;
-  const survivalValue = !surv ? "N/A" : surv.sufficient ? surv.label : "INSUFFICIENT";
-  const survivalColor =
-    !surv || !surv.sufficient
-      ? "var(--warn)"
-      : surv.label === "STRONG"
-        ? "var(--bull)"
-        : surv.label === "MODERATE"
-          ? "var(--neon)"
-          : surv.label === "LOW"
-            ? "var(--warn)"
-            : "var(--bear)";
   return (
-    <section
-      ref={cardRef}
-      className="glass rounded-xl border border-border/50 p-5 transition-shadow duration-700 md:p-7"
-      style={
-        focused
-          ? {
-              borderColor: "var(--bull)",
-              boxShadow: "0 0 0 2px color-mix(in oklab, var(--bull) 55%, transparent)",
-            }
-          : undefined
-      }
-    >
-      <div className="flex items-center gap-2">
-        <span className="font-mono text-[11px] font-bold tracking-[0.3em] text-[var(--neon)]">
-          #1 BEST CURRENT OPPORTUNITY
-        </span>
-        <PhaseBadge phase={c.phase} />
-        {item.preferred && (
-          <span className="rounded border border-[var(--accent)] px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.18em] text-[var(--accent)]">
-            Primary contract
-          </span>
-        )}
-      </div>
-      <h2 className="mt-2 font-display text-4xl font-bold md:text-5xl">
-        {item.symbol} <span className="text-muted-foreground">·</span> {c.label}
-      </h2>
-      <p className="mt-1 text-sm text-muted-foreground">
-        {item.name} · regime {item.intel.regime?.label ?? "—"} · {c.n} tick sample
-      </p>
-
-      <div className="mt-5 flex flex-wrap gap-5">
-        <ScoreRing value={item.score} label="Opportunity" tone="neon" size={120} />
-        <ScoreRing value={c.confidence} label="Confidence" tone="bull" size={120} sublabel="" />
-        <ScoreRing
-          value={c.danger}
-          label="Danger"
-          tone={c.danger > 55 ? "bear" : "warn"}
-          size={120}
-        />
-      </div>
-
-      <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        <div className="rounded-lg border border-border/60 bg-background/50 p-3">
-          <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
-            Engine agreement
-          </div>
-          <div
-            className="mt-0.5 font-mono text-2xl font-bold"
-            style={{ color: item.agreement === "SUPPORT" ? "var(--bull)" : undefined }}
-          >
-            {item.agreement}
-          </div>
-        </div>
-        <div className="rounded-lg border border-border/60 bg-background/50 p-3">
-          <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
-            Simulated contracts won
-          </div>
-          <div className="mt-0.5 font-mono text-2xl font-bold">
-            {sim && sim.n ? (
-              <>
-                {simWins} / {sim.n} won{" "}
-                <span
-                  style={{ color: sim.winRate >= c.theoretical ? "var(--bull)" : "var(--bear)" }}
-                >
-                  ({(sim.winRate * 100).toFixed(0)}%)
-                </span>
-              </>
-            ) : (
-              <span className="text-muted-foreground">No sample yet</span>
-            )}
-          </div>
-        </div>
-        <div className="rounded-lg border border-border/60 bg-background/50 p-3">
-          <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
-            Entry point digit
-          </div>
-          <div
-            className="mt-0.5 font-display text-4xl font-bold leading-none"
-            style={{ color: d && !waitForEntry ? "var(--bull)" : "var(--warn)" }}
-          >
-            {entryDigitText}
-          </div>
-          <p className="mt-1 text-[11px] text-muted-foreground">
-            {d && !waitForEntry
-              ? `Wait for digit ${d.digit} to print`
-              : (item.signal?.reason ?? "No digit has validated conditional evidence yet")}
-          </p>
-        </div>
-        <div className="rounded-lg border border-border/60 bg-background/50 p-3">
-          <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
-            Validity window
-          </div>
-          <div
-            className="mt-0.5 font-mono text-sm font-bold"
-            style={{ color: d && !waitForEntry ? "var(--neon)" : "var(--warn)" }}
-          >
-            {ep.window.label}
-          </div>
-          <p className="mt-1 text-[11px] text-muted-foreground">{ep.window.basis}</p>
-        </div>
-        <div className="rounded-lg border border-border/60 bg-background/50 p-3">
-          <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
-            DBot execution survival
-          </div>
-          <div className="mt-0.5 font-mono text-2xl font-bold" style={{ color: survivalColor }}>
-            {survivalValue}
-          </div>
-          <p className="mt-1 text-[11px] text-muted-foreground">
-            {surv
-              ? surv.summary
-              : "No validated entry digit, so post-entry survival is undefined here."}
-          </p>
-        </div>
-      </div>
-
-      <div className="mt-5 border-t border-border/50 pt-5">
-        <TradeFeedback item={item} />
-      </div>
-
-      <CanonicalAlertBanner item={item} alerts={alerts} stale={alertStale} />
-    </section>
+    <BestOpportunityCard
+      item={item}
+      bestOf90={bestOf90}
+      alerts={alerts}
+      cardRef={cardRef}
+      focused={focused}
+      alertStale={alertStale}
+    />
   );
 }
 

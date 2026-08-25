@@ -427,7 +427,10 @@ export function rankOpportunities(
       rank: index + 1,
       symbol: marketId,
       name: intel.name,
-      contract,
+      contract: {
+        ...contract,
+        losingSidePressure: dossier.losingSidePressure?.raw ?? contract.losingSidePressure ?? null,
+      },
       intel,
       score: dossier.score,
       preferred: PRIMARY_CONTRACTS.includes(prop as any),
@@ -574,6 +577,7 @@ export function rankOpportunities(
       signal,
       relative: relativeEdgeReport,
       persistence: persistenceReport,
+      losingSidePressure: dossier.losingSidePressure?.raw ?? contract.losingSidePressure ?? null,
       qualityBand:
         dossier.qualityBand ?? assessQuality(dossier, dossier.momentumRelation ?? "NEUTRAL").band,
       reliabilityState: dossier.statistics?.calibration?.reliabilityState,

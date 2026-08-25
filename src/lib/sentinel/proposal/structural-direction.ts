@@ -304,15 +304,15 @@ export function evaluateSideStructure(state: CanonicalStateLike, side: Side): Si
     return { support: 1, note: `strongest structural gain favours ${side} (${pp(delta(d))}).` };
   });
 
-  // ── MOST DECREASING — should be on the losing side (soft) ─────────────
+  // ── MOST DECREASING — fading out of the opposing side is supportive; winning side is contextual ─
   add("MOST DECREASING", state.mostDecreasing, 8, (d) => {
     if (favours(d)) {
       return {
-        support: -1,
-        note: `the ${side} winning side is the one bleeding share (${pp(delta(d))}).`,
+        support: 0,
+        note: `digit ${d} is decreasing (${pp(delta(d))}) — contextual evidence.`,
       };
     }
-    return { support: 1, note: `the opposing side is bleeding share (${pp(delta(d))}).` };
+    return { support: 1, note: `opposing side is bleeding share (${pp(delta(d))}) — supportive.` };
   });
 
   // ── EDGE GROUP — each member suppressed under 10% and rising ──────────

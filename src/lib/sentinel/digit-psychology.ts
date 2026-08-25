@@ -510,20 +510,20 @@ export function contractPsychology(
   );
 
   // ── MOST DECREASING — fading out of the losing region is supportive;
-  //    fading out of the winning region is a caution ─────────────────────
-  add("MOST DECREASING", state.mostDecreasing, 8, (d, zone) =>
-    zone === "LOSING"
-      ? {
-          support: 1 as const,
-          note: `fading ${Math.abs(state.deltaPp[d]).toFixed(2)}pp out of the losing region.`,
-        }
-      : zone === "WINNING"
-        ? {
-            support: -1 as const,
-            note: `fading ${Math.abs(state.deltaPp[d]).toFixed(2)}pp out of the winning region.`,
-          }
-        : { support: 0 as const, note: "fading on the boundary." },
-  );
+  //    fading in the winning region is contextual evidence (does NOT oppose) ─
+  add("MOST DECREASING", state.mostDecreasing, 8, (d, zone) => {
+    const isLosingSide = !winners.includes(d);
+    if (isLosingSide || zone === "LOSING") {
+      return {
+        support: 1 as const,
+        note: `fading ${Math.abs(state.deltaPp[d]).toFixed(2)}pp out of the losing region (supportive).`,
+      };
+    }
+    return {
+      support: 0 as const,
+      note: `fading ${Math.abs(state.deltaPp[d]).toFixed(2)}pp on digit ${d} (${zone.toLowerCase()} region, contextual evidence).`,
+    };
+  });
 
   // ── EDGE GROUP — 7/8/9 (OVER) or 0/1/2 (UNDER) each < 10% AND increasing rapidly via Pressure Engine ──
   measurable += 1;

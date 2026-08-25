@@ -28,14 +28,29 @@ function createSupabaseFetch(supabaseKey: string): typeof fetch {
 }
 
 
+function isValidHttpUrl(url: unknown): url is string {
+  if (!url || typeof url !== 'string') return false;
+  const trimmed = url.trim();
+  if (!trimmed.startsWith('http://') && !trimmed.startsWith('https://')) return false;
+  try {
+    const parsed = new URL(trimmed);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
 function createSupabaseClient() {
   // Use import.meta.env for client-side (Vite build-time replacement)
   // Fall back to process.env for SSR (server-side rendering)
-  const SUPABASE_URL = import.meta.env['VITE_SUPABASE_URL'] || process.env['SUPABASE_URL'] || 'https://placeholder.supabase.co';
-  const SUPABASE_PUBLISHABLE_KEY = import.meta.env['VITE_SUPABASE_PUBLISHABLE_KEY'] || process.env['SUPABASE_PUBLISHABLE_KEY'] || 'sb_publishable_placeholder';
+  const rawUrl = import.meta.env['VITE_SUPABASE_URL'] || (typeof process !== 'undefined' ? process.env?.['SUPABASE_URL'] : undefined);
+  const SUPABASE_URL = isValidHttpUrl(rawUrl) ? rawUrl.trim() : 'https://placeholder.supabase.co';
 
-  if (!import.meta.env['VITE_SUPABASE_URL'] && !process.env['SUPABASE_URL']) {
-    console.warn('[Supabase] Missing Supabase environment variables. Running in preview fallback mode.');
+  const rawKey = import.meta.env['VITE_SUPABASE_PUBLISHABLE_KEY'] || (typeof process !== 'undefined' ? process.env?.['SUPABASE_PUBLISHABLE_KEY'] : undefined);
+  const SUPABASE_PUBLISHABLE_KEY = rawKey && typeof rawKey === 'string' && rawKey.trim() ? rawKey.trim() : 'sb_publishable_placeholder';
+
+  if (!isValidHttpUrl(rawUrl)) {
+    console.warn('[Supabase] Missing or invalid Supabase environment variables. Running in preview fallback mode.');
   }
 
   return createClient<Database>(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {

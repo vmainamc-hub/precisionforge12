@@ -147,4 +147,125 @@ describe("evaluateExecutionReady (§35)", () => {
       true,
     );
   });
+
+  // ── REGRESSION SUITE (§35 Digit Psychology Correction) ────────────────
+  it("REGRESSION TEST 1: UNDER 8 + decreasing digit 1 has NO hard veto", () => {
+    const under8Input: ExecutionReadyInput = {
+      side: "UNDER",
+      winners: [0, 1, 2, 3, 4, 5, 6, 7],
+      losers: [8, 9],
+      structureDirection: "UNDER",
+      direction: {
+        label: "STRONG",
+        score: 82,
+        spine: {
+          structuralDirection: "UNDER",
+          aligned: true,
+        },
+      },
+      danger: {
+        level: "CALM",
+        total: 10,
+        isHardBlocked: false,
+        summary: "Calm",
+      },
+      canonicalState: {
+        mostIncreasing: 3, // in winners [0..7]
+        mostDecreasing: 1, // in winners [0..7], NOT in losers [8,9]
+      },
+      entryPoint: {
+        status: "ARMED",
+        confidence: 75,
+      },
+      entryClearance: {
+        verdict: "CLEARED",
+        requirements: [{ met: true, label: "Cleared" }],
+      },
+    };
+
+    const res = evaluateExecutionReady(under8Input);
+    expect(res.executionReady).toBe(true);
+    expect(res.conditions.digitTrendConfirmed).toBe(true);
+    expect(res.executionReadyReasons).toHaveLength(0);
+    expect(
+      res.executionReadyReasons.some((r) => r.includes("most decreasing digit")),
+    ).toBe(false);
+  });
+
+  it("REGRESSION TEST 2: UNDER 8 + decreasing digit 8 succeeds without imposing a hard requirement", () => {
+    const under8Input: ExecutionReadyInput = {
+      side: "UNDER",
+      winners: [0, 1, 2, 3, 4, 5, 6, 7],
+      losers: [8, 9],
+      structureDirection: "UNDER",
+      direction: {
+        label: "STRONG",
+        score: 85,
+        spine: {
+          structuralDirection: "UNDER",
+          aligned: true,
+        },
+      },
+      danger: {
+        level: "CALM",
+        total: 10,
+        isHardBlocked: false,
+      },
+      canonicalState: {
+        mostIncreasing: 3,
+        mostDecreasing: 8, // in losers [8,9]
+      },
+      entryPoint: {
+        status: "ARMED",
+        confidence: 80,
+      },
+      entryClearance: {
+        verdict: "CLEARED",
+        requirements: [{ met: true, label: "Cleared" }],
+      },
+    };
+
+    const res = evaluateExecutionReady(under8Input);
+    expect(res.executionReady).toBe(true);
+    expect(res.conditions.digitTrendConfirmed).toBe(true);
+  });
+
+  it("REGRESSION TEST 3: OVER contract + decreasing digit in winning side does NOT trigger a hard veto", () => {
+    const overInput: ExecutionReadyInput = {
+      side: "OVER",
+      winners: [3, 4, 5, 6, 7, 8, 9],
+      losers: [0, 1, 2],
+      structureDirection: "OVER",
+      direction: {
+        label: "STRONG",
+        score: 80,
+        spine: {
+          structuralDirection: "OVER",
+          aligned: true,
+        },
+      },
+      danger: {
+        level: "LOW",
+        total: 20,
+        isHardBlocked: false,
+      },
+      canonicalState: {
+        mostIncreasing: 6, // in winners [3..9]
+        mostDecreasing: 7, // in winners [3..9], NOT in losers [0..2]
+      },
+      entryPoint: {
+        status: "ENTER NOW",
+        confidence: 70,
+      },
+      entryClearance: {
+        verdict: "CLEARED",
+        requirements: [{ met: true, label: "Cleared" }],
+      },
+    };
+
+    const res = evaluateExecutionReady(overInput);
+    expect(res.executionReady).toBe(true);
+    expect(res.conditions.digitTrendConfirmed).toBe(true);
+    expect(res.executionReadyReasons).toHaveLength(0);
+  });
 });

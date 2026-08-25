@@ -118,7 +118,7 @@ export function computeDirection(
       n: intel.stats?.n ?? 0,
       measurability: intel.pressure ? 1 : 0,
       detail: intel.pressure
-        ? `Winning-side pressure asymmetry ${(asym * 100).toFixed(0)}% (zone migration ${intel.pressure.migration.toFixed(2)}).`
+        ? `Winning-side pressure asymmetry ${((asym ?? 0) * 100).toFixed(0)}% (zone migration ${(intel.pressure.migration ?? 0).toFixed(2)}).`
         : "Pressure engine has no reading on this market.",
     });
   }

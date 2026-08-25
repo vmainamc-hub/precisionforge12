@@ -121,7 +121,7 @@ export default function DbotHandoff({ item }: { item: RankedOpportunity }) {
 
   const seqValue = !seq ? "N/A" : seq.verdict;
   const seqSub = seq
-    ? `N=${seq.n} · LLR ${seq.llr.toFixed(2)} · ${seq.summary}`
+    ? `N=${seq.n ?? 0} · LLR ${seq.llr != null ? seq.llr.toFixed(2) : "—"} · ${seq.summary ?? ""}`
     : "No sequential test data";
   const seqTone = !seq
     ? "warn"
@@ -139,17 +139,17 @@ export default function DbotHandoff({ item }: { item: RankedOpportunity }) {
     `INSTRUCTION   : ${instruction ? instruction.headline : statusLabel}`,
     instruction ? `WHY           : ${instruction.detail}` : "",
     d && !waitForEntry
-      ? `ENTRY MARGIN  : ${marginText} (score ${d.score.toFixed(0)}${ep.runnerUpDigit !== null ? ` vs runner-up digit ${ep.runnerUpDigit} at ${ep.runnerUpScore?.toFixed(0)}` : ""})`
+      ? `ENTRY MARGIN  : ${marginText} (score ${d.score != null ? d.score.toFixed(0) : "—"}${ep.runnerUpDigit !== null ? ` vs runner-up digit ${ep.runnerUpDigit} at ${ep.runnerUpScore != null ? ep.runnerUpScore.toFixed(0) : "—"}` : ""})`
       : "",
     d
-      ? `ENTRY BASIS   : P(win | digit ${d.digit} showing) ${(d.pWin * 100).toFixed(1)}% (95% LB ${(d.pWinLower * 100).toFixed(1)}%) vs theoretical ${(c.theoretical * 100).toFixed(1)}% over N=${d.n}`
+      ? `ENTRY BASIS   : P(win | digit ${d.digit} showing) ${((d.pWin ?? 0) * 100).toFixed(1)}% (95% LB ${((d.pWinLower ?? 0) * 100).toFixed(1)}%) vs theoretical ${((c.theoretical ?? 0) * 100).toFixed(1)}% over N=${d.n ?? 0}`
       : `ENTRY BASIS   : no digit has enough conditional evidence yet`,
     `STATUS        : ${ep.status}`,
-    `CONFIDENCE    : ${ep.confidence}/100 (setup ${item.setup.grade} ${item.setup.score.toFixed(0)}/100, danger ${c.danger.toFixed(0)}/100)`,
+    `CONFIDENCE    : ${ep.confidence}/100 (setup ${item.setup.grade} ${item.setup.score != null ? item.setup.score.toFixed(0) : "—"}/100, danger ${c.danger != null ? c.danger.toFixed(0) : "—"}/100)`,
     cal ? `CALIBRATION   : ${calValue} (${calSub})` : "",
     seq ? `SEQUENTIAL SPRT: ${seqValue} (${seqSub})` : "",
     combo
-      ? `COMBO STATE   : ${combo.state} (Win rate ${(combo.winRate * 100).toFixed(1)}% over N=${combo.n})`
+      ? `COMBO STATE   : ${combo.state} (Win rate ${((combo.winRate ?? 0) * 100).toFixed(1)}% over N=${combo.n ?? 0})`
       : "",
     `VALIDITY      : ${ep.window.label} — ${ep.window.basis}`,
     `EXEC SURVIVAL : ${survivalValue} — ${survivalSub}`,
@@ -260,7 +260,7 @@ export default function DbotHandoff({ item }: { item: RankedOpportunity }) {
           value={entryDigitText}
           sub={
             d && !waitForEntry
-              ? `P(win | digit ${d.digit}) ${(d.pWin * 100).toFixed(1)}% · N=${d.n} · ~${d.expectedWaitTicks} ticks apart`
+              ? `P(win | digit ${d.digit}) ${((d.pWin ?? 0) * 100).toFixed(1)}% · N=${d.n ?? 0} · ~${d.expectedWaitTicks ?? 0} ticks apart`
               : (signal?.reason ?? "No digit has validated conditional evidence yet")
           }
           tone={d && !waitForEntry ? "bull" : waitForEntry ? "warn" : "bear"}
@@ -269,7 +269,7 @@ export default function DbotHandoff({ item }: { item: RankedOpportunity }) {
         <Field
           label="Confidence"
           value={`${ep.confidence}/100`}
-          sub={`Setup ${item.setup.grade} ${item.setup.score.toFixed(0)} · danger ${c.danger.toFixed(0)} · persistence ${item.persistence.scans < 2 ? "no history" : `${item.persistence.persistence}/100`}`}
+          sub={`Setup ${item.setup.grade} ${item.setup.score != null ? item.setup.score.toFixed(0) : "—"} · danger ${c.danger != null ? c.danger.toFixed(0) : "—"} · persistence ${item.persistence.scans < 2 ? "no history" : `${item.persistence.persistence}/100`}`}
           tone={ep.confidence >= 65 ? "bull" : ep.confidence >= 45 ? "warn" : "bear"}
         />
         <Field
@@ -277,7 +277,7 @@ export default function DbotHandoff({ item }: { item: RankedOpportunity }) {
           value={d && !waitForEntry ? marginText : "—"}
           sub={
             ep.runnerUpDigit !== null && d && !waitForEntry
-              ? `Runner-up digit ${ep.runnerUpDigit} at ${ep.runnerUpScore?.toFixed(0)}/100 vs preferred ${d.score.toFixed(0)}/100 — separation, not a replacement.`
+              ? `Runner-up digit ${ep.runnerUpDigit} at ${ep.runnerUpScore != null ? ep.runnerUpScore.toFixed(0) : "—"}/100 vs preferred ${d.score != null ? d.score.toFixed(0) : "—"}/100 — separation, not a replacement.`
               : "Separation from the runner-up is only reported once a digit is validated."
           }
           tone={d && !waitForEntry ? (ep.entryMargin >= 5 ? "bull" : "warn") : "warn"}

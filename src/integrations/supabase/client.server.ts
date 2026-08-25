@@ -29,12 +29,26 @@ function createSupabaseFetch(supabaseKey: string): typeof fetch {
   };
 }
 
-function createSupabaseAdminClient() {
-  const SUPABASE_URL = process.env['SUPABASE_URL'] || 'https://placeholder.supabase.co';
-  const SUPABASE_SERVICE_ROLE_KEY = process.env['SUPABASE_SERVICE_ROLE_KEY'] || 'sb_secret_placeholder';
+function isValidHttpUrl(url: unknown): url is string {
+  if (!url || typeof url !== 'string') return false;
+  const trimmed = url.trim();
+  if (!trimmed.startsWith('http://') && !trimmed.startsWith('https://')) return false;
+  try {
+    const parsed = new URL(trimmed);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
 
-  if (!process.env['SUPABASE_URL'] || !process.env['SUPABASE_SERVICE_ROLE_KEY']) {
-    console.warn('[Supabase Admin] Missing Supabase server environment variables. Running in fallback mode.');
+function createSupabaseAdminClient() {
+  const rawUrl = process.env['SUPABASE_URL'];
+  const SUPABASE_URL = isValidHttpUrl(rawUrl) ? rawUrl.trim() : 'https://placeholder.supabase.co';
+  const rawKey = process.env['SUPABASE_SERVICE_ROLE_KEY'];
+  const SUPABASE_SERVICE_ROLE_KEY = rawKey && typeof rawKey === 'string' && rawKey.trim() ? rawKey.trim() : 'sb_secret_placeholder';
+
+  if (!isValidHttpUrl(rawUrl) || !rawKey) {
+    console.warn('[Supabase Admin] Missing or invalid Supabase server environment variables. Running in fallback mode.');
   }
 
   return createClient<Database>(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {

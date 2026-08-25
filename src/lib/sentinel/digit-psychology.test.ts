@@ -464,3 +464,223 @@ describe("entryDigitPsychologyBias", () => {
     expect(entryDigitPsychologyBias(thin, under5, 3).points).toBe(0);
   });
 });
+
+describe("Regression Suite (§35 Digit Psychology Logic Correction)", () => {
+  // Test 1: UNDER 8 + decreasing digit 1 — asserted no hard veto, treated as contextual evidence
+  it("REGRESSION TEST 1: UNDER 8 + mostDecreasing = 1 is NOT disqualified or vetoed", () => {
+    const mockState: CanonicalDigitState = {
+      n: 1000,
+      windowSize: 1000,
+      pct: [12, 8, 10, 16, 12, 14, 10, 10, 4, 4],
+      deltaPp: [0.5, -1.2, 0.4, 1.8, 0.2, 0.1, -0.2, -0.1, -0.5, -1.0], // digit 1 is -1.2pp
+      recentPct: [120, 80, 100, 160, 120, 140, 100, 100, 40, 40],
+      green: 3, // ODD (3), in winning zone [0..7]
+      secondGreen: 5, // ODD (5), in winning zone [0..7]
+      red: 0, // EVEN (0), in range 0-4, in winning zone [0..7]
+      secondRed: 2, // EVEN (2), in range 0-4, in winning zone [0..7]
+      mostIncreasing: 3,
+      mostDecreasing: 1, // digit 1 (winning zone for UNDER 8, NOT in [8,9])
+      change: "STABLE",
+      changeDetail: "Stable",
+      summary: "test",
+    };
+
+    const res = contractPsychology(mockState, {
+      label: "UNDER 8",
+      side: "UNDER",
+      barrier: 8,
+      winners: [0, 1, 2, 3, 4, 5, 6, 7],
+    });
+
+    expect(res.hardBlock).toBe(false);
+    expect(res.verdict).toBe("SUPPORT");
+    const decPos = res.positions.find((p) => p.role === "MOST DECREASING");
+    expect(decPos).toBeDefined();
+    // Contextual evidence, never opposing
+    expect(decPos?.support).toBeGreaterThanOrEqual(0);
+  });
+
+  // Test 2: UNDER 8 + decreasing digit 8 — losing side decrease is supportive
+  it("REGRESSION TEST 2: UNDER 8 + decreasing digit 8 is recognized as supportive", () => {
+    const mockState: CanonicalDigitState = {
+      n: 1000,
+      windowSize: 1000,
+      pct: [12, 8, 10, 16, 12, 14, 10, 10, 4, 4],
+      deltaPp: [0.5, 0.2, 0.4, 1.8, 0.2, 0.1, -0.2, -0.1, -1.5, -0.5], // digit 8 is -1.5pp
+      recentPct: [120, 80, 100, 160, 120, 140, 100, 100, 40, 40],
+      green: 3,
+      secondGreen: 5,
+      red: 0,
+      secondRed: 2,
+      mostIncreasing: 3,
+      mostDecreasing: 8, // in losing zone [8,9]
+      change: "STABLE",
+      changeDetail: "Stable",
+      summary: "test",
+    };
+
+    const res = contractPsychology(mockState, {
+      label: "UNDER 8",
+      side: "UNDER",
+      barrier: 8,
+      winners: [0, 1, 2, 3, 4, 5, 6, 7],
+    });
+
+    expect(res.hardBlock).toBe(false);
+    expect(res.verdict).toBe("SUPPORT");
+    const decPos = res.positions.find((p) => p.role === "MOST DECREASING");
+    expect(decPos?.support).toBe(1);
+  });
+
+  // Test 3: OVER equivalent — decreasing digit on winning side is NOT a hard veto
+  it("REGRESSION TEST 3: OVER contract + decreasing digit on winning side does not veto", () => {
+    const mockState: CanonicalDigitState = {
+      n: 1000,
+      windowSize: 1000,
+      pct: [4, 4, 10, 10, 12, 14, 16, 10, 12, 8],
+      deltaPp: [-1.0, -0.5, -0.2, -0.1, 0.2, 0.1, 1.5, -1.2, 0.4, 0.8], // digit 7 is -1.2pp
+      recentPct: [40, 40, 100, 100, 120, 140, 160, 100, 120, 80],
+      green: 6, // EVEN (6), in winning zone [5..9]
+      secondGreen: 8, // EVEN (8), in winning zone [5..9]
+      red: 5, // ODD (5), in range 5-9, in winning zone [5..9]
+      secondRed: 7, // ODD (7), in range 5-9, in winning zone [5..9]
+      mostIncreasing: 6,
+      mostDecreasing: 7, // in winning zone for OVER 3 [4..9]
+      change: "STABLE",
+      changeDetail: "Stable",
+      summary: "test",
+    };
+
+    const res = contractPsychology(mockState, {
+      label: "OVER 3",
+      side: "OVER",
+      barrier: 3,
+      winners: [4, 5, 6, 7, 8, 9],
+    });
+
+    expect(res.hardBlock).toBe(false);
+    expect(res.verdict).toBe("SUPPORT");
+    const decPos = res.positions.find((p) => p.role === "MOST DECREASING");
+    expect(decPos?.support).toBe(0); // Neutral contextual evidence, not -1
+  });
+
+  // Test 4: Red-bar evidence — strong red-bar support keeps contract valid even if most-decreasing is on winning side
+  it("REGRESSION TEST 4: strong red-bar support keeps contract valid when decreasing digit is on winning side", () => {
+    const mockState: CanonicalDigitState = {
+      n: 1000,
+      windowSize: 1000,
+      pct: [5, 10, 6, 18, 12, 16, 8, 10, 9, 6],
+      deltaPp: [0.3, -0.8, 0.2, 1.6, 0.4, 0.2, -0.3, -0.1, -0.2, -1.3],
+      recentPct: [50, 100, 60, 180, 120, 160, 80, 100, 90, 60],
+      green: 3, // ODD (3)
+      secondGreen: 5, // ODD (5)
+      red: 0, // EVEN (0), correctly in 0-4 and winning zone
+      secondRed: 2, // EVEN (2), correctly in 0-4 and winning zone
+      mostIncreasing: 3,
+      mostDecreasing: 1, // on winning side
+      change: "STABLE",
+      changeDetail: "Stable",
+      summary: "test",
+    };
+
+    const res = contractPsychology(mockState, {
+      label: "UNDER 7",
+      side: "UNDER",
+      barrier: 7,
+      winners: [0, 1, 2, 3, 4, 5, 6],
+    });
+
+    expect(res.hardBlock).toBe(false);
+    expect(res.verdict).toBe("SUPPORT");
+    const redPos = res.positions.find((p) => p.role === "RED");
+    expect(redPos?.support).toBe(1);
+  });
+
+  // Test 5: Red-bar conflict — red-bar conflict opposes contract even if most-decreasing is in favorable losing position
+  it("REGRESSION TEST 5: red-bar conflict opposes contract even if decreasing digit is in losing zone", () => {
+    const mockState: CanonicalDigitState = {
+      n: 1000,
+      windowSize: 1000,
+      pct: [12, 10, 8, 5, 10, 15, 10, 10, 10, 10],
+      deltaPp: [-0.5, 0, 0, 1.5, 0, 0, 0, 0, 0, -2.0], // digit 9 is most decreasing (-2.0pp)
+      recentPct: [120, 100, 80, 50, 100, 150, 100, 100, 100, 100],
+      green: 6,
+      secondGreen: 8,
+      red: 3, // RED is 3 (outside 5-9 for OVER, sitting in losing zone 0-4)
+      secondRed: 7,
+      mostIncreasing: 3,
+      mostDecreasing: 9, // in winning zone for OVER 4, but fading
+      change: "STABLE",
+      changeDetail: "Stable",
+      summary: "test",
+    };
+
+    const res = contractPsychology(mockState, {
+      label: "OVER 4",
+      side: "OVER",
+      barrier: 4,
+      winners: [5, 6, 7, 8, 9],
+    });
+
+    expect(res.hardBlock).toBe(false);
+    // Red bar conflict takes precedence over most-decreasing position
+    expect(res.verdict).toBe("CONFLICT");
+  });
+
+  // Test 6: Special digits — 1, 8, 012, 789
+  it("REGRESSION TEST 6: special handling for 1, 8, 012, 789 remains active and distinct from generic zone logic", () => {
+    // Digit 1 forbidden as RED for OVER
+    const forbidden1State: CanonicalDigitState = {
+      n: 1000,
+      windowSize: 1000,
+      pct: [10, 3, 10, 10, 10, 15, 12, 10, 10, 10],
+      deltaPp: [0, 0, 0, 0, 0, 0.5, 0.5, 0, 0, 0],
+      recentPct: [100, 30, 100, 100, 100, 150, 120, 100, 100, 100],
+      green: 6,
+      secondGreen: 8,
+      red: 1, // Forbidden excluded digit 1 for OVER
+      secondRed: 7,
+      mostIncreasing: 6,
+      mostDecreasing: null,
+      change: "STABLE",
+      changeDetail: "Stable",
+      summary: "test",
+    };
+
+    const overRes = contractPsychology(forbidden1State, {
+      label: "OVER 4",
+      side: "OVER",
+      barrier: 4,
+      winners: [5, 6, 7, 8, 9],
+    });
+    expect(overRes.hardBlock).toBe(true);
+    expect(overRes.hardBlockReason).toContain("forbidden digit 1");
+
+    // Digit 8 forbidden as RED for UNDER
+    const forbidden8State: CanonicalDigitState = {
+      n: 1000,
+      windowSize: 1000,
+      pct: [10, 10, 10, 12, 10, 10, 10, 10, 3, 15],
+      deltaPp: [0, 0, 0, 0.5, 0, 0, 0, 0, 0, 0.5],
+      recentPct: [100, 100, 100, 120, 100, 100, 100, 100, 30, 150],
+      green: 9,
+      secondGreen: 3,
+      red: 8, // Forbidden excluded digit 8 for UNDER
+      secondRed: 2,
+      mostIncreasing: 9,
+      mostDecreasing: null,
+      change: "STABLE",
+      changeDetail: "Stable",
+      summary: "test",
+    };
+
+    const underRes = contractPsychology(forbidden8State, {
+      label: "UNDER 7",
+      side: "UNDER",
+      barrier: 7,
+      winners: [0, 1, 2, 3, 4, 5, 6],
+    });
+    expect(underRes.hardBlock).toBe(true);
+    expect(underRes.hardBlockReason).toContain("forbidden digit 8");
+  });
+});
