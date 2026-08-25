@@ -22,7 +22,7 @@ import {
   PROPOSITIONS,
 } from "@/lib/sentinel/observation";
 import { assessQuality } from "@/lib/sentinel/observation/selectivity";
-import type { MarketIntel, RankedOpportunity, ScanResult, ContractEval } from "./types";
+import type { MarketIntel, RankedOpportunity, ScanResult, ContractEval, BestOf90Result, BestOf90Status, RankFactor } from "./types";
 import { PRIMARY_CONTRACTS } from "./types";
 import type { EntryPointReport } from "../sentinel/entry-point";
 import type { CanonicalDigitState } from "@/lib/sentinel/digit-psychology";
@@ -473,8 +473,45 @@ export function rankOpportunities(
       observationDossier: dossier,
       dossier,
       observationQualification: qualification,
-      factors: (dossier as any).factors ?? [],
-      invalidation: (dossier as any).invalidation ?? [],
+      factors:
+        Array.isArray((dossier as any).factors) && (dossier as any).factors.length > 0
+          ? (dossier as any).factors
+          : [
+              {
+                label: "1,000-Tick Digit Psychology",
+                points: Math.round(digitPsychologyReport.score * 0.35),
+                detail: `${digitPsychologyReport.verdict} (${digitPsychologyReport.score}/100) on canonical 1,000-tick distribution`,
+              },
+              {
+                label: "Structural Direction",
+                points: Math.round((dossier.direction?.score ?? 50) * 0.25),
+                detail: `${dossier.direction?.side ?? (prop.startsWith("OVER") ? "OVER" : "UNDER")} alignment (${dossier.direction?.label ?? "NEUTRAL"})`,
+              },
+              {
+                label: "Relative Edge",
+                points: Math.round((relativeEdgeReport.relativeEdge ?? 0) * 5),
+                detail: `${relativeEdgeReport.label} (vs ${relativeEdgeReport.fieldSize} cells)`,
+              },
+              {
+                label: "Setup Quality",
+                points: Math.round(setupReport.score * 0.2),
+                detail: `Grade ${setupReport.grade} (${setupReport.score.toFixed(0)}/100)`,
+              },
+              {
+                label: "Danger Clearance",
+                points: -Math.round(dangerComp.total * 0.2),
+                detail: `Danger ${dangerComp.total}/100 (${dangerComp.level})`,
+              },
+            ],
+      invalidation:
+        Array.isArray((dossier as any).invalidation) && (dossier as any).invalidation.length > 0
+          ? (dossier as any).invalidation
+          : [
+              ...(entryPoint.invalidation ?? []),
+              `Danger score exceeds safety boundary (score > 45)`,
+              `Structural direction flips against ${prop.startsWith("OVER") ? "OVER" : "UNDER"}`,
+              `Losing side pressure accelerates beyond 40% threshold`,
+            ],
       direction: dossier.direction ?? {
         side: prop.startsWith("OVER") ? "OVER" : "UNDER",
         strength: 0,
@@ -611,7 +648,7 @@ export function scanNow(
   const { ranked, rejected } = rankOpportunities(intels, opts, true);
   const gd = globalDanger(intels);
 
-  // STRICT OPERATOR SURFACE GATE — Only candidates meeting all 9 gates are surfaced.
+  // STRICT OPERATOR SURFACE GATE — Only candidates meeting all 9 gates are surfaced in top.
   // 90 cells remain fully evaluated in 'ranked' for internal observation.
   const qualified = ranked.filter((r) => {
     const gate = operatorSurfaceGate(r, r.intel, {
@@ -622,6 +659,59 @@ export function scanNow(
 
   // NO UNQUALIFIED FALLBACKS — If no candidate is qualified, top is strictly empty.
   const top = qualified.slice(0, 5);
+
+  const leadCandidate = ranked.length > 0 ? ranked[0] : null;
+  let bestOf90: BestOf90Result | null = null;
+  if (leadCandidate) {
+    const gate = operatorSurfaceGate(leadCandidate, leadCandidate.intel, {
+      minScore: opts.opportunityThreshold,
+    });
+    const isHardBlocked = Boolean(
+      leadCandidate.blocked ||
+        (leadCandidate.dangerComposition?.total ?? 0) > 45 ||
+        leadCandidate.clearance?.state === "BLOCKED" ||
+        gate.blockers.some(
+          (b) =>
+            b.includes("DANGER") ||
+            b.includes("VETO") ||
+            b.includes("HARD") ||
+            b.includes("CLEARANCE BLOCKED"),
+        ),
+    );
+
+    let status: BestOf90Status;
+    if (!gate.qualified) {
+      status = isHardBlocked ? "BEST OF 90 — BLOCKED" : "BEST OF 90 — NOT QUALIFIED";
+    } else if (leadCandidate.executionReady) {
+      status = "BEST OF 90 — EXECUTION READY";
+    } else if (
+      leadCandidate.entryPoint.status === "WAIT" ||
+      leadCandidate.signal.state === "VALID_WAIT_ENTRY" ||
+      leadCandidate.entryClearance.verdict === "WAIT" ||
+      !leadCandidate.entryPoint.preferred ||
+      leadCandidate.signal.waitForEntry
+    ) {
+      status = "BEST OF 90 — WAITING FOR ENTRY";
+    } else {
+      status = "BEST OF 90 — QUALIFIED";
+    }
+
+    bestOf90 = {
+      rank: 1,
+      populationSize: ranked.length,
+      bestOfPopulation: true,
+      candidate: leadCandidate,
+      status,
+      qualified: gate.qualified,
+      blockers: gate.blockers,
+      executionReady: Boolean(leadCandidate.executionReady),
+      executionReadyReasons: leadCandidate.executionReadyReasons ?? [],
+      waitForEntry: Boolean(
+        leadCandidate.signal?.waitForEntry || !leadCandidate.entryPoint.preferred,
+      ),
+      analyzedAt: Date.now(),
+    };
+  }
 
   let verdict: ScanResult["verdict"];
   let message: string;
@@ -645,6 +735,8 @@ export function scanNow(
     globalDanger: gd,
     globalDangerLabel: gd < 35 ? "CALM" : gd < 65 ? "ELEVATED" : "HOSTILE",
     top,
+    bestOf90,
+    best: leadCandidate,
     rejected: rejected.slice(0, 40),
     verdict,
     message,

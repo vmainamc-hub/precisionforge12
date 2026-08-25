@@ -375,6 +375,27 @@ export interface RankFactor {
   detail: string;
 }
 
+export type BestOf90Status =
+  | "BEST OF 90 — EXECUTION READY"
+  | "BEST OF 90 — WAITING FOR ENTRY"
+  | "BEST OF 90 — QUALIFIED"
+  | "BEST OF 90 — BLOCKED"
+  | "BEST OF 90 — NOT QUALIFIED";
+
+export interface BestOf90Result {
+  rank: 1;
+  populationSize: number;
+  bestOfPopulation: boolean;
+  candidate: RankedOpportunity;
+  status: BestOf90Status;
+  qualified: boolean;
+  blockers: string[];
+  executionReady: boolean;
+  executionReadyReasons: string[];
+  waitForEntry: boolean;
+  analyzedAt: number;
+}
+
 export interface ScanResult {
   scannedAt: number;
   marketsOnline: number;
@@ -383,6 +404,8 @@ export interface ScanResult {
   globalDanger: number;
   globalDangerLabel: "CALM" | "ELEVATED" | "HOSTILE";
   top: RankedOpportunity[];
+  bestOf90?: BestOf90Result | null;
+  best?: RankedOpportunity | null;
   rejected: { symbol: string; contract: string; reason: string }[];
   verdict: "OPPORTUNITY" | "MODERATE" | "NONE" | "DATA_UNAVAILABLE";
   message: string;
