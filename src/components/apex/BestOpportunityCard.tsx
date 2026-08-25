@@ -110,11 +110,11 @@ export function BestOpportunityCard({
       barrier: c.barrier ?? "N/A",
       targetEntryDigit: d ? d.digit : "WAIT_FOR_TRIGGER",
       entryTriggerTouch: item.entryTrigger?.touch ?? "ANY",
-      entryConfidence: item.entryPoint?.preferred ? Math.round(item.entryPoint.preferred.winRate * 100) : item.score,
-      validityWindow: ep.window.label,
-      validityWindowKind: ep.window.kind,
-      validityBasis: ep.window.basis,
-      invalidationConditions: item.invalidation,
+      entryConfidence: item.entryPoint?.preferred ? Math.round(((item.entryPoint.preferred.pWin ?? 0) * 100)) : item.score,
+      validityWindow: ep?.window?.label ?? "15-20 TICKS",
+      validityWindowKind: ep?.window?.kind ?? "DYNAMIC",
+      validityBasis: ep?.window?.basis ?? "Dynamic entry window",
+      invalidationConditions: item.invalidation ?? [],
       instruction: item.signal?.instruction?.headline ?? "AWAIT_QUALIFIED_TRIGGER",
       instructionDetail: item.signal?.instruction?.detail ?? "",
       operatorSurfaceGate: gate.qualified ? "QUALIFIED" : "NOT_QUALIFIED",
@@ -349,23 +349,23 @@ export function BestOpportunityCard({
               Evidence Fusion:{" "}
               <span className="text-foreground">
                 {item.evidenceFusion && item.evidenceFusion.effectiveScore != null
-                  ? `${item.evidenceFusion.effectiveScore.toFixed(0)}/100 (${item.evidenceFusion.agreement})`
+                  ? `${item.evidenceFusion.effectiveScore.toFixed(0)}/100 (${item.evidenceFusion.consensus ?? "NEUTRAL"})`
                   : "NOT AVAILABLE"}
               </span>
             </div>
             <div>
               Calibration Win:{" "}
               <span className="text-foreground">
-                {item.calibration && item.calibration.calibratedProb != null
-                  ? `${(item.calibration.calibratedProb * 100).toFixed(1)}%`
+                {item.calibration && (item.calibration.calibratedProbability != null || (item.calibration as any).calibratedProb != null)
+                  ? `${(((item.calibration.calibratedProbability ?? (item.calibration as any).calibratedProb ?? 0)) * 100).toFixed(1)}%`
                   : "NOT AVAILABLE"}
               </span>
             </div>
             <div>
               Markov Context:{" "}
               <span className="text-foreground">
-                {item.contextMarkov && item.contextMarkov.contextWinProb != null
-                  ? `Favors Digit ${item.contextMarkov.preferredDigit} (${(item.contextMarkov.contextWinProb * 100).toFixed(1)}%)`
+                {item.contextMarkov && (item.contextMarkov.preferredPWin != null || (item.contextMarkov as any).contextWinProb != null)
+                  ? `Favors Digit ${item.contextMarkov.preferredDigit ?? "—"} (${(((item.contextMarkov.preferredPWin ?? (item.contextMarkov as any).contextWinProb ?? 0)) * 100).toFixed(1)}%)`
                   : "NOT AVAILABLE"}
               </span>
             </div>
@@ -403,15 +403,15 @@ export function BestOpportunityCard({
                 <div>
                   P(win | entry):{" "}
                   <span className="text-bull font-bold">
-                    {((d.winRate ?? 0) * 100).toFixed(1)}%
+                    {(((d.pWin ?? (d as any).winRate ?? 0)) * 100).toFixed(1)}%
                   </span>{" "}
-                  (95% LB: {((d.lowerBound ?? 0) * 100).toFixed(1)}%)
+                  (95% LB: {(((d.pWinLower ?? (d as any).lowerBound ?? 0)) * 100).toFixed(1)}%)
                 </div>
                 <div>
                   Sample N: <span className="text-foreground">{d.n ?? 0} occurrences</span>
                 </div>
                 <div>
-                  Margin: <span className="text-bull">+{(d.margin ?? 0).toFixed(1)} pts</span> vs baseline
+                  Margin: <span className="text-bull">+{(d.edgePp ?? (d as any).margin ?? 0).toFixed(1)} pts</span> vs baseline
                 </div>
                 <div>
                   Runner-up Digit:{" "}
@@ -420,7 +420,7 @@ export function BestOpportunityCard({
                   </span>
                 </div>
                 <div>
-                  Wait: ~{(d.expectedWaitTicks ?? 0).toFixed(0)}t · Seen: {d.ticksSinceLastSeen ?? 0}t ago
+                  Wait: ~{(d.expectedWaitTicks ?? 0).toFixed(0)}t · Seen: {d.sinceSeen ?? (d as any).ticksSinceLastSeen ?? 0}t ago
                 </div>
               </>
             ) : (
@@ -582,7 +582,7 @@ export function BestOpportunityCard({
             <div>
               120t Trend:{" "}
               <span className="text-foreground">
-                {item.priceAction?.sideTrend ?? "FLAT"} ({item.priceAction?.sideNetGain ? (item.priceAction.sideNetGain > 0 ? "+" : "") + item.priceAction.sideNetGain.toFixed(1) + "%" : "0%"})
+                {item.priceAction?.sideTrend ?? "FLAT"} ({typeof item.priceAction?.sideNetGain === "number" ? ((item.priceAction.sideNetGain > 0 ? "+" : "") + item.priceAction.sideNetGain.toFixed(1) + "%") : "0%"})
               </span>
             </div>
             <div>
@@ -649,20 +649,20 @@ export function BestOpportunityCard({
           </div>
           <div className="mt-2 space-y-1 font-mono text-[10px] text-muted-foreground">
             <div>
-              LLR: <span className="text-foreground">{item.sequentialTest?.llr != null ? item.sequentialTest.llr.toFixed(2) : "—"}</span> (N={item.sequentialTest?.n ?? 0})
+              LLR: <span className="text-foreground">{typeof item.sequentialTest?.llr === "number" ? item.sequentialTest.llr.toFixed(2) : "—"}</span> (N={item.sequentialTest?.n ?? 0})
             </div>
             <div>
               Exact Combo:{" "}
               <span className="text-foreground">
                 {item.combination
-                  ? `${((item.combination.winRate ?? 0) * 100).toFixed(1)}% (N=${item.combination.n ?? 0}, Exp ${(item.combination.expectancy ?? 0).toFixed(2)})`
+                  ? `${(((item.combination.weightedWinRate ?? item.combination.winRate ?? 0)) * 100).toFixed(1)}% (N=${item.combination.n ?? 0}, Exp ${(item.combination.weightedExpectancy ?? item.combination.expectancy ?? 0).toFixed(2)})`
                   : "NO COMBO DATA"}
               </span>
             </div>
             <div>
               Simulator Performance:{" "}
               <span className="text-foreground">
-                {sim && sim.n ? `${simWins}/${sim.n} won (${((sim.winRate ?? 0) * 100).toFixed(1)}%)` : "NO SAMPLE"}
+                {sim && sim.n ? `${simWins}/${sim.n} won (${(((sim.winRate ?? 0)) * 100).toFixed(1)}%)` : "NO SAMPLE"}
               </span>
             </div>
           </div>
@@ -675,25 +675,25 @@ export function BestOpportunityCard({
           </div>
           <div className="mt-1 font-mono text-lg font-bold text-[var(--neon)]">
             {(item.relative?.relativeEdge ?? 0) > 0 ? "+" : ""}
-            {((item.relative?.relativeEdge ?? 0) * 100).toFixed(2)}pp
+            {(item.relative?.relativeEdge ?? 0).toFixed(2)}pp
           </div>
           <div className="mt-2 space-y-1 font-mono text-[10px] text-muted-foreground">
             <div>
-              Field Percentile:{" "}
+              Field Position:{" "}
               <span className="text-foreground">
-                {((item.relative?.percentile ?? 1) * 100).toFixed(0)}th percentile
+                #{item.relative?.fieldRank ?? 1} / {item.relative?.fieldSize ?? 90} ({item.relative?.normalized != null ? item.relative.normalized.toFixed(0) : "100"}/100)
               </span>
             </div>
             <div>
               Risk-Adjusted Edge:{" "}
               <span className="text-foreground">
-                {(item.relative?.riskAdjustedEdge ?? 0).toFixed(1)}
+                {(item.relative?.riskAdjustedEdge ?? 0).toFixed(2)}
               </span>
             </div>
             <div>
               Persistence:{" "}
               <span className="text-foreground">
-                {item.persistence?.persistenceScore != null ? item.persistence.persistenceScore.toFixed(0) : "N/A"}/100 (Top-3 in {item.persistence?.top3Count ?? 0}/{item.persistence?.scanCount ?? 0} scans)
+                {item.persistence?.persistence != null ? item.persistence.persistence.toFixed(0) : (item.persistence as any)?.persistenceScore != null ? (item.persistence as any).persistenceScore.toFixed(0) : "N/A"}/100 (Top-3 in {item.persistence?.topThree ?? (item.persistence as any)?.top3Count ?? 0}/{item.persistence?.scans ?? (item.persistence as any)?.scanCount ?? 0} scans)
               </span>
             </div>
           </div>
@@ -730,10 +730,12 @@ export function BestOpportunityCard({
                 Significance Guard (FDR &amp; MES)
               </div>
               <div className="mt-1 font-mono text-sm font-bold text-foreground">
-                {item.finalDecision.significance.passesCorrection ? "PASSED (HONEST)" : "UNCONFIRMED"}
+                {item.finalDecision.significance?.passesCorrection ? "PASSED (HONEST)" : "UNCONFIRMED"}
               </div>
               <div className="mt-0.5 text-[10px] text-muted-foreground">
-                p = {item.finalDecision.significance.fdrAdjustedThreshold.toFixed(4)} threshold across {item.finalDecision.significance.activeComparisons} cells
+                {item.finalDecision.significance?.fdrAdjustedThreshold != null
+                  ? `p = ${item.finalDecision.significance.fdrAdjustedThreshold.toFixed(4)} threshold across ${item.finalDecision.significance.activeComparisons ?? 90} cells`
+                  : item.finalDecision.significance?.detail ?? "Evaluating multi-hypothesis significance"}
               </div>
             </div>
 
@@ -742,10 +744,10 @@ export function BestOpportunityCard({
                 Recommended Stake
               </div>
               <div className="mt-1 font-mono text-sm font-bold text-[var(--bull,#22c55e)]">
-                ${item.finalDecision.recommendedStake.drawdownAdjustedStake.toFixed(2)}
+                ${(item.finalDecision.recommendedStake?.drawdownAdjustedStake ?? 1).toFixed(2)}
               </div>
               <div className="mt-0.5 text-[10px] text-muted-foreground">
-                Kelly {(item.finalDecision.recommendedStake.kellyFraction * 100).toFixed(1)}% · Max Drawdown {item.finalDecision.recommendedStake.drawdownMultiplier.toFixed(2)}x
+                Kelly {(((item.finalDecision.recommendedStake?.kellyFraction ?? 0.05)) * 100).toFixed(1)}% · Max Bankroll {(((item.finalDecision.recommendedStake?.maxBankrollPct ?? 0.02)) * 100).toFixed(1)}%
               </div>
             </div>
 
@@ -754,10 +756,10 @@ export function BestOpportunityCard({
                 Circuit Breaker State
               </div>
               <div className="mt-1 font-mono text-sm font-bold text-foreground">
-                {item.finalDecision.circuitBreaker.tripped ? "TRIPPED (HALT)" : "NOMINAL"}
+                {item.finalDecision.circuitBreaker?.tripped ? "TRIPPED (HALT)" : "NOMINAL"}
               </div>
               <div className="mt-0.5 text-[10px] text-muted-foreground">
-                {item.finalDecision.circuitBreaker.reason || "Session risk within normal boundaries"}
+                {item.finalDecision.circuitBreaker?.reason || "Session risk within normal boundaries"}
               </div>
             </div>
 
@@ -771,8 +773,8 @@ export function BestOpportunityCard({
                   : "WITHIN LIMITS"}
               </div>
               <div className="mt-0.5 text-[10px] text-muted-foreground">
-                {item.finalDecision.exposure
-                  ? `$${item.finalDecision.exposure.totalProposedExposure.toFixed(2)} proposed / $${item.finalDecision.exposure.limits.maxTotalPortfolioExposure.toFixed(0)} cap`
+                {item.finalDecision.exposure?.totalProposedExposure != null
+                  ? `$${item.finalDecision.exposure.totalProposedExposure.toFixed(2)} proposed exposure`
                   : "Correlation groups below maximum exposure ceiling"}
               </div>
             </div>
@@ -861,7 +863,7 @@ export function BestOpportunityCard({
             <div className="text-[9px] uppercase tracking-wider text-muted-foreground">
               Validity
             </div>
-            <div className="font-bold text-foreground">{ep.window.label}</div>
+            <div className="font-bold text-foreground">{ep?.window?.label ?? "15-20 TICKS"}</div>
           </div>
         </div>
       </div>
