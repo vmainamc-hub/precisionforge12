@@ -3,7 +3,8 @@
 // Feeds Calibration, Conformal bounds, Walk-Forward validation, and Adaptive Ensemble weights.
 
 import { supabase } from "@/integrations/supabase/client";
-import type { FinalSignal } from "./final-signal";
+import type { FinalSignal, EngineVote } from "./final-signal";
+import { ParityEnsembleLearner } from "./engines/ensemble-engine";
 
 export type ParityOutcome = "pending" | "win" | "loss" | "skipped" | "invalidated";
 export type ParityQualityBand = "premium" | "standard" | "developing" | "unknown";
@@ -22,6 +23,7 @@ export interface ParityJournalEntry {
   expiresAt?: string;
   resolvedAt?: string | null;
   entryDigit?: number;
+  engineVotes?: { engine: string; side: "EVEN" | "ODD" | "NEUTRAL" }[];
 }
 
 const KEY = "pp:journal:v2";
@@ -190,6 +192,7 @@ export function recordPublishedFinalSignal(signal: FinalSignal): ParityJournalEn
     entryFormula: signal.entryFormula,
     expiresAt: signal.validity.expiresAt,
     entryDigit: signal.focusDigitOrPattern?.digit,
+    engineVotes: signal.engineVotes?.map((v) => ({ engine: v.engine, side: v.side })),
   });
 }
 
@@ -219,15 +222,24 @@ export function markParityOutcome(id: string, outcome: ParityOutcome) {
 /** Check pending signals against the latest printed tick last digit and auto-resolve */
 export function checkAndResolvePendingSignals(market: string, printedDigit: number) {
   const list = all();
-  const now = Date.now();
   const printedParity: "EVEN" | "ODD" = printedDigit % 2 === 0 ? "EVEN" : "ODD";
 
   for (let i = 0; i < list.length; i++) {
     const entry = list[i];
     if (entry.market === market && entry.outcome === "pending") {
-      // If signal had a specific trigger digit, resolve when that digit appeared or window expired
       const isWin = entry.side === printedParity;
       markParityOutcome(entry.id, isWin ? "win" : "loss");
+
+      // Adaptive Bayesian Ensemble Feedback Loop
+      if (entry.engineVotes && entry.engineVotes.length > 0) {
+        const learner = ParityEnsembleLearner.get();
+        for (const ev of entry.engineVotes) {
+          if (ev.side !== "NEUTRAL") {
+            const engineCorrect = ev.side === printedParity;
+            learner.recordEngineOutcome(entry.market, ev.engine, engineCorrect);
+          }
+        }
+      }
     }
   }
 }

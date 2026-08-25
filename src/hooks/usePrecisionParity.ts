@@ -14,6 +14,7 @@ import type {
   EmittedParityOpportunity,
 } from "@/lib/precision-parity/types";
 import { computeSpecificParityEntryDigit } from "@/lib/precision-parity/engines/specific-entry-digit";
+import { runSignalDecayEngine } from "@/lib/precision-parity/engines/decay-engine";
 import {
   recordPublishedFinalSignal,
   checkAndResolvePendingSignals,
@@ -173,12 +174,14 @@ export function usePrecisionParity(
       }
 
       const remainingSec = Math.max(0, Math.ceil((oppTiming.validUntil - now) / 1000));
-      const confidence = m.verdict.confidence;
+      const elapsedTicks = Math.max(0, Math.floor((now - oppTiming.createdAt) / 2000));
+      const decay = runSignalDecayEngine(m.verdict.confidence, elapsedTicks, 15);
+      const confidence = decay.decayedConfidence;
       const ev = m.signal?.expectedValue ?? 0.12;
       const winRate = entryDecision.preferred.pWin || 0.64;
 
       let status: "ARMED" | "ENTER_NOW" | "PENDING_DIGIT" | "EXPIRED" = "ARMED";
-      if (remainingSec === 0) {
+      if (remainingSec === 0 || decay.isExpired) {
         status = "EXPIRED";
       } else if (isTriggerShowing) {
         status = "ENTER_NOW";

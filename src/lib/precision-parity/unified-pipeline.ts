@@ -23,6 +23,9 @@ import { runEVGateEngine } from "./engines/ev-gate-engine";
 import { runParityStakeEngine } from "./engines/risk-stake-engine";
 import { computeSpecificParityEntryDigit } from "./engines/specific-entry-digit";
 import { runParityPersonalityEngine } from "./engines/personality-engine";
+import { runParityConfluenceEngine } from "./engines/confluence-engine";
+import { runParityRegimeEngine } from "./engines/regime-engine";
+import { ParityEnsembleLearner } from "./engines/ensemble-engine";
 import { fitParityHMM } from "./hmm";
 import { decorrelate } from "./decorrelation";
 import { computeSignificance } from "./significance";
@@ -82,6 +85,8 @@ export interface UnifiedPipelineResult {
     panel: ReturnType<typeof runIntelligencePanel>;
     deep: ReturnType<typeof runDeepReasoning>;
     specificDigit: ReturnType<typeof computeSpecificParityEntryDigit>;
+    regime: ReturnType<typeof runParityRegimeEngine>;
+    confluence: ReturnType<typeof runParityConfluenceEngine>;
   };
 }
 
@@ -513,6 +518,23 @@ export function runUnifiedParityPipeline(input: UnifiedPipelineInput): UnifiedPi
   // ──────────────────────────────────────────────────────────────────────────
   const particles = runParticleFilter(digits);
   const drift = runDriftDetection(digits, symbol);
+  const parityRegime = runParityRegimeEngine(digits);
+  const confluence = runParityConfluenceEngine(
+    stats,
+    markov,
+    runs,
+    pressure,
+    pattern,
+    parityRegime,
+    anomaly,
+  );
+
+  // Bayesian Ensemble online weight multiplier adaptation
+  const ensembleLearner = ParityEnsembleLearner.get();
+  for (const v of engineVotes) {
+    const weightMultiplier = ensembleLearner.getEngineWeight(symbol, v.engine, 1.0);
+    v.strength = Math.round(v.strength * weightMultiplier * 100) / 100;
+  }
 
   // Determine initial favored side from collective votes
   const evenVoteWeight = engineVotes
@@ -839,6 +861,8 @@ export function runUnifiedParityPipeline(input: UnifiedPipelineInput): UnifiedPi
       panel,
       deep,
       specificDigit,
+      regime: parityRegime,
+      confluence,
     },
   };
 }

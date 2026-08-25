@@ -31,6 +31,7 @@ import type { SetupReport } from "../sentinel/setup";
 import type { EntryClearanceReport } from "../sentinel/entry-clearance";
 import type { RelativeEdgeReport } from "../sentinel/relative-edge";
 import type { PersistenceReport } from "../sentinel/scan-memory";
+import { operatorSurfaceGate } from "./operator-surface-gate";
 
 export interface ScanOptions {
   /** Extra score awarded to Under 7 / Over 2 — the operator's primary
@@ -610,21 +611,17 @@ export function scanNow(
   const { ranked, rejected } = rankOpportunities(intels, opts, true);
   const gd = globalDanger(intels);
 
-  // The operator always gets the highest-ranking candidate across all 90 cells,
-  // prioritizing observation-qualified & unblocked setups first.
-  const qualified = ranked.filter(
-    (r) =>
-      !r.blocked &&
-      ((r.observationQualification &&
-        (r.observationQualification.liveHealth === "HEALTHY" ||
-          r.observationQualification.liveHealth === "AT_RISK")) ||
-        Boolean(r.observationDossier?.isRipe || r.dossier?.isRipe)),
-  );
-  const unblocked = ranked.filter((r) => !r.blocked);
-  const top = (qualified.length > 0 ? qualified : unblocked.length > 0 ? unblocked : ranked).slice(
-    0,
-    5,
-  );
+  // STRICT OPERATOR SURFACE GATE — Only candidates meeting all 9 gates are surfaced.
+  // 90 cells remain fully evaluated in 'ranked' for internal observation.
+  const qualified = ranked.filter((r) => {
+    const gate = operatorSurfaceGate(r, r.intel, {
+      minScore: opts.opportunityThreshold,
+    });
+    return gate.qualified;
+  });
+
+  // NO UNQUALIFIED FALLBACKS — If no candidate is qualified, top is strictly empty.
+  const top = qualified.slice(0, 5);
 
   let verdict: ScanResult["verdict"];
   let message: string;
@@ -633,25 +630,11 @@ export function scanNow(
     message = "DATA UNAVAILABLE — no market is currently streaming enough ticks to analyse.";
   } else if (!top.length) {
     verdict = "NONE";
-    message = `NO OPPORTUNITY AVAILABLE — no candidate in the 90-cell universe currently streaming.`;
-  } else if (
-    top[0].observationQualification &&
-    (top[0].observationQualification.liveHealth === "HEALTHY" ||
-      top[0].observationQualification.liveHealth === "AT_RISK") &&
-    top[0].score >= opts.opportunityThreshold &&
-    top[0].entryClearance.verdict === "CLEARED" &&
-    (top[0].intel.fluctuation?.state ?? "CALM") !== "CHAOTIC" &&
-    (top[0].contract.exposure?.state ?? "LOW") !== "SEVERE" &&
-    top[0].agreement !== "STRONG CONFLICT"
-  ) {
-    verdict = "OPPORTUNITY";
-    message = `${top[0].contract.label} on ${top[0].name} — RIPE & QUALIFIED (${top[0].observationQualification.liveHealth}). ${top[0].entryPoint.preferred ? `Entry on digit ${top[0].entryPoint.preferred.digit} (${top[0].entryPoint.status}) — ${top[0].entryPoint.window.label}.` : "Awaiting entry trigger digit."} ${top[0].observationQualification.snapshot.explanation ?? top[0].setup.summary}`;
-  } else if (top[0].score >= opts.opportunityThreshold && !top[0].blocked) {
-    verdict = "OPPORTUNITY";
-    message = `${top[0].contract.label} on ${top[0].name} — leading candidate (Score ${top[0].score.toFixed(0)}/100, ${top[0].setup.grade}). ${top[0].entryPoint.preferred ? `Entry on digit ${top[0].entryPoint.preferred.digit} (${top[0].entryPoint.status}) — ${top[0].entryPoint.window.label}.` : "No validated entry digit yet."} ${top[0].setup.summary}`;
+    message = "Observing 90 cells — No candidate currently meets operator qualification criteria.";
   } else {
-    verdict = "MODERATE";
-    message = `RANK #1: ${top[0].contract.label} on ${top[0].name} (Score ${top[0].score.toFixed(0)}/100, ${top[0].setup.grade}) — ${top[0].observationQualification?.snapshot.explanation ?? top[0].entryClearance.summary}`;
+    verdict = "OPPORTUNITY";
+    const lead = top[0];
+    message = `${lead.contract.label} on ${lead.name} — QUALIFIED (${lead.score.toFixed(0)}/100, ${lead.setup.grade}). ${lead.entryPoint.preferred ? `Entry on digit ${lead.entryPoint.preferred.digit} (${lead.entryPoint.status}) — ${lead.entryPoint.window.label}.` : "Awaiting entry trigger digit."} ${lead.observationQualification?.snapshot.explanation ?? lead.setup.summary}`;
   }
 
   return {

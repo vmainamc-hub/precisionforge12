@@ -54,6 +54,7 @@ import {
 } from "@/components/apex/OpportunityAlert";
 import { useOpportunityAlerts } from "@/hooks/useOpportunityAlerts";
 import { isExpired, opportunityKey, qualify } from "@/lib/sentinel/opportunity-alert";
+import { operatorSurfaceGate } from "@/lib/apex/operator-surface-gate";
 
 import {
   DEFAULT_EXECUTION,
@@ -114,19 +115,22 @@ function ApexPage() {
 
   // ATOMIC ALERT → #1 PROMOTION.
   // The alerted candidate is promoted to #1 only while it still exists in the
-  // live ranked field and still satisfies the UNCHANGED alert qualification.
+  // live ranked field and satisfies both alert qualification and operatorSurfaceGate.
   const alertedLive = useMemo(() => {
     const ep = alerts.episode;
     if (!ep || ep.status !== "ACTIVE" || isExpired(ep)) return null;
     const live = apex.ranked.find((o) => opportunityKey(o) === ep.key) ?? null;
     if (!live) return null;
-    return qualify(live, alerts.config).ok ? live : null;
+    if (!qualify(live, alerts.config).ok) return null;
+    const gate = operatorSurfaceGate(live, live.intel);
+    return gate.qualified ? live : null;
   }, [alerts.episode, alerts.config, apex.ranked]);
 
   const alertStale = !!alerts.episode && !alertedLive;
-  // FROZEN SCAN RESULT — once SCAN is pressed the presented best opportunity is
-  // the scan snapshot and it stays put until the next scan.
-  const best = apex.scan?.top[0] ?? alertedLive ?? apex.ranked[0] ?? null;
+  // FROZEN SCAN RESULT — strictly qualified candidates only.
+  // If no candidate is qualified, best is strictly null. No apex.ranked[0] fallback!
+  const best =
+    (apex.scan?.top && apex.scan.top.length > 0 ? apex.scan.top[0] : null) ?? alertedLive ?? null;
 
   // AUTOMATIC VISUAL FOCUS — sound → look at screen → see the exact signal.
   const latestAlertId = alerts.latest?.id ?? null;
@@ -369,7 +373,7 @@ function ApexPage() {
                           askAI(
                             best,
                             apex.globalDanger,
-                            (apex.scan?.top ?? apex.ranked).slice(1, 3),
+                            (apex.scan?.top ?? []).slice(1, 3),
                           )
                         }
                       />
@@ -417,10 +421,10 @@ function ApexPage() {
                     <AccordionContent className="space-y-5 pb-4">
                       <WhyNotRunnerUp
                         top={best}
-                        runners={(apex.scan?.top ?? apex.ranked).slice(1, 3)}
+                        runners={(apex.scan?.top ?? []).slice(1, 3)}
                       />
                       <div className="grid gap-4 lg:grid-cols-2">
-                        {(apex.scan?.top ?? apex.ranked).slice(1, 3).map((r, i) => (
+                        {(apex.scan?.top ?? []).slice(1, 3).map((r, i) => (
                           <RunnerUp
                             key={`${r.symbol}-${r.contract.id}`}
                             item={r}

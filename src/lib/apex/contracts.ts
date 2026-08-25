@@ -26,6 +26,7 @@ import {
   applyWinningSideMomentum,
   winningSideMomentum,
 } from "@/lib/sentinel/winning-side-momentum";
+import { engineInfluence } from "./engine-effectiveness";
 import type { DigitIntel } from "./digit-intel";
 import type { BarStructure } from "./bars";
 import type { EnsembleResult } from "./ml";
@@ -141,7 +142,15 @@ export function evaluateContract(spec: ContractSpec, ctx: EvalContext): Contract
 
   const supports: Evidence[] = [];
   const conflicts: Evidence[] = [];
-  const push = (e: Evidence) => (e.weight >= 0 ? supports : conflicts).push(e);
+  const push = (e: Evidence) => {
+    const influence = engineInfluence(e.engine);
+    const effectiveWeight = clamp(e.weight * influence, -1, 1);
+    const effectiveEvidence: Evidence = {
+      ...e,
+      weight: effectiveWeight,
+    };
+    (effectiveEvidence.weight >= 0 ? supports : conflicts).push(effectiveEvidence);
+  };
 
   push({
     engine: "Empirical Performance",
