@@ -274,8 +274,25 @@ class ApexCore {
     }
   }
 
-  private cycle() {
+  /** Yield the main thread so input, paint and other tabs stay responsive. */
+  private yieldToBrowser(): Promise<void> {
+    return new Promise((resolve) => {
+      const ric = (globalThis as any).requestIdleCallback as
+        | ((cb: () => void, opts?: { timeout: number }) => number)
+        | undefined;
+      if (ric) ric(() => resolve(), { timeout: 120 });
+      else setTimeout(resolve, 0);
+    });
+  }
+
+  private async cycle() {
     if (this.refs <= 0) return;
+    // Never analyse while the tab is hidden — this is what was pinning the CPU
+    // in the background and starving other apps.
+    if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+      this.schedule(1000);
+      return;
+    }
     // IN-FLIGHT COALESCING: If an expensive cycle is still executing, do NOT launch
     // another full computation concurrently. Mark that a fresh cycle was requested.
     if (this.inFlight) {
@@ -284,6 +301,7 @@ class ApexCore {
     }
     this.inFlight = true;
     this.pendingCycle = false;
+    const started = Date.now();
 
     try {
       const slice: string[] = [];
@@ -295,6 +313,9 @@ class ApexCore {
       for (const sym of slice) {
         if (this.refs <= 0) break;
         this.analyse(sym);
+        // One market per task: keeps every chunk of work short instead of
+        // blocking the main thread for the whole batch.
+        await this.yieldToBrowser();
       }
 
       if (this.refs > 0) {
@@ -320,13 +341,15 @@ class ApexCore {
       }
     } finally {
       this.inFlight = false;
-      // If another cycle was requested while in-flight and consumers still exist, execute the coalesced cycle.
-      if (this.pendingCycle && this.refs > 0) {
-        this.pendingCycle = false;
-        setTimeout(() => this.cycle(), 0);
-      }
+      const elapsed = Date.now() - started;
+      this.avgCycleMs = this.avgCycleMs ? this.avgCycleMs * 0.7 + elapsed * 0.3 : elapsed;
+      // Adaptive back-off: never spend more than ~50% of wall-clock time computing.
+      const delay = Math.min(5000, Math.max(RECOMPUTE_MS, Math.round(this.avgCycleMs)));
+      if (this.refs > 0) this.schedule(this.pendingCycle ? 0 : delay);
+      this.pendingCycle = false;
     }
   }
+
 
   /** Append a live tick into the extended 5000-tick buffers. */
   private appendDeep(sym: string, price: number) {
