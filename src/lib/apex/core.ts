@@ -92,7 +92,6 @@ class ApexCore {
   private version = 0;
   private inFlight = false;
   private pendingCycle = false;
-  private visibilityBound = false;
   /** Rolling average cost of one cycle (ms) — drives adaptive back-off. */
   private avgCycleMs = 0;
 
