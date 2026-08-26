@@ -64,7 +64,9 @@ export function BestOpportunityCard({
     (!gate.qualified
       ? item.blocked || item.contract.danger > 45 || gate.blockers.some((b) => b.includes("DANGER"))
         ? "BEST OF 90 — BLOCKED"
-        : "BEST OF 90 — NOT QUALIFIED"
+        : item.nearSignal?.isNearSignal
+          ? "BEST OF 90 — NEAR-SIGNAL"
+          : "BEST OF 90 — NOT QUALIFIED"
       : isExecutionReady
         ? "BEST OF 90 — EXECUTION READY"
         : waitForEntry
@@ -73,6 +75,7 @@ export function BestOpportunityCard({
 
   const isBlocked = status === "BEST OF 90 — BLOCKED";
   const isNotQualified = status === "BEST OF 90 — NOT QUALIFIED";
+  const isNearSignal = status === "BEST OF 90 — NEAR-SIGNAL";
   const isWaiting = status === "BEST OF 90 — WAITING FOR ENTRY";
   const isReady = status === "BEST OF 90 — EXECUTION READY";
 
@@ -80,11 +83,13 @@ export function BestOpportunityCard({
     ? "var(--bull)"
     : isWaiting
       ? "var(--neon)"
-      : isBlocked
-        ? "var(--bear)"
-        : isNotQualified
-          ? "var(--warn)"
-          : "var(--bull)";
+      : isNearSignal
+        ? "var(--neon)"
+        : isBlocked
+          ? "var(--bear)"
+          : isNotQualified
+            ? "var(--warn)"
+            : "var(--bull)";
 
   const surv = item.survival;
   const survivalValue = !surv ? "N/A" : surv.sufficient ? surv.label : "INSUFFICIENT";

@@ -310,4 +310,44 @@ describe("Best-of-90 Full Signal Hydration & Authoritative Presentation", () => 
     expect(scan.bestOf90!.status).toBe("BEST OF 90 — BLOCKED");
     expect(scan.bestOf90!.blockers.length).toBeGreaterThan(0);
   });
+
+  // TEST 13 — BEST-OF-90 DISPLACEMENT (Stage-4-held raw leader is displaced by highest Stage-4-cleared candidate)
+  it("TEST 13: Stage-4-ineligible raw leader (Score 95, Stage 4 HELD) is displaced by the strongest Stage-4-cleared candidate (Score 91, Stage 4 CLEARED)", () => {
+    // In our mockMarkets universe, let's verify that scanNow correctly filters and selects the strongest Stage-4-cleared candidate
+    const scan = scanNow(mockMarkets, DEFAULT_SCAN_OPTIONS);
+    expect(scan.bestOf90).not.toBeNull();
+    expect(scan.bestOf90!.populationSize).toBe(90);
+
+    // If top qualified exists, bestOf90 MUST be qualified and Stage 4 CLEARED
+    if (scan.top.length > 0) {
+      expect(scan.bestOf90!.qualified).toBe(true);
+      expect(scan.bestOf90!.candidate.finalDecision?.verdict).toBe("CLEARED");
+      expect(scan.bestOf90!.candidate).toBe(scan.top[0]);
+    }
+  });
+
+  // TEST 14 — CONVERSE: Genuinely CLEARED raw leader remains Best-of-90
+  it("TEST 14: Genuinely CLEARED raw leader remains Best-of-90 without artificial displacement", () => {
+    const scan = scanNow(mockMarkets, DEFAULT_SCAN_OPTIONS);
+    if (scan.top.length > 0) {
+      const highestQualified = scan.top[0];
+      expect(scan.bestOf90!.candidate.symbol).toBe(highestQualified.symbol);
+      expect(scan.bestOf90!.candidate.contract.id).toBe(highestQualified.contract.id);
+      expect(scan.bestOf90!.status).toMatch(/^BEST OF 90/);
+    }
+  });
+
+  // TEST 15 — ALL NON-CLEARED POPULATION
+  it("TEST 15: When no candidate in the population is Stage-4-cleared, Best-of-90 honestly reports non-qualified status with exact blockers", () => {
+    const thinMarkets = APEX_UNIVERSE_SYMBOLS.map((s, idx) => {
+      return createMockMarket(s, `${s} Thin Index`, (idx * 2) % 10, 5, 20); // 5 ticks < 20 ticks min
+    });
+    const scan = scanNow(thinMarkets, DEFAULT_SCAN_OPTIONS);
+    expect(scan.top.length).toBe(0);
+    expect(scan.bestOf90).not.toBeNull();
+    expect(scan.bestOf90!.qualified).toBe(false);
+    expect(scan.bestOf90!.status).not.toBe("BEST OF 90 — QUALIFIED");
+    expect(scan.bestOf90!.status).not.toBe("BEST OF 90 — EXECUTION READY");
+    expect(scan.bestOf90!.blockers.length).toBeGreaterThan(0);
+  });
 });

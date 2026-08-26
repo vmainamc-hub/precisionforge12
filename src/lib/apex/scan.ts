@@ -746,7 +746,13 @@ export function scanNow(
 
     let status: BestOf90Status;
     if (!isFullyQualified) {
-      status = isHardBlocked ? "BEST OF 90 — BLOCKED" : "BEST OF 90 — NOT QUALIFIED";
+      if (isHardBlocked) {
+        status = "BEST OF 90 — BLOCKED";
+      } else if (leadCandidate.nearSignal?.isNearSignal) {
+        status = "BEST OF 90 — NEAR-SIGNAL";
+      } else {
+        status = "BEST OF 90 — NOT QUALIFIED";
+      }
     } else if (leadCandidate.executionReady) {
       status = "BEST OF 90 — EXECUTION READY";
     } else if (

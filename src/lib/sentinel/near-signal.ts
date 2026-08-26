@@ -15,6 +15,7 @@
 
 import type { RankedOpportunity } from "../apex/types";
 import type { SetupFactor } from "@/types/sentinel";
+import { OPERATOR_SURFACE_THRESHOLDS } from "../apex/operator-surface-thresholds";
 
 export interface NearSignalAssessment {
   isNearSignal: boolean;
@@ -29,20 +30,26 @@ export interface NearSignalAssessment {
 export class NearSignalEngine {
   /**
    * Evaluates whether a RankedOpportunity qualifies as a diagnostic NEAR-SIGNAL.
+   *
+   * Derived purely from authoritative Sentinel evidence and blockers:
+   * - Never creates an independent/arbitrary scoring system.
+   * - isExecutable is ALWAYS false.
+   * - Explicitly details the exact remaining execution gap from Sentinel's real pipeline.
    */
   public static evaluate(candidate: RankedOpportunity): NearSignalAssessment {
     const strengths: string[] = [];
     const missingConditions: string[] = [];
     const factors: SetupFactor[] = [];
 
-    // Check if the candidate is already fully executable and cleared
+    // Check if the candidate is already fully executable and Stage 4 cleared
     const isStage4Cleared = candidate.finalDecision?.verdict === "CLEARED";
     const isExecutionReady = Boolean(candidate.executionReady);
+    const danger = candidate.dangerComposition?.total ?? candidate.contract.danger ?? 0;
     const isGateQualified = Boolean(
-      candidate.clearance?.state === "CLEARED" &&
+      (candidate.clearance?.state === "CLEARED" || candidate.entryClearance?.verdict === "CLEARED") &&
       !candidate.blocked &&
-      candidate.score >= 70 &&
-      (candidate.dangerComposition?.total ?? candidate.contract.danger ?? 0) <= 45
+      candidate.score >= OPERATOR_SURFACE_THRESHOLDS.minScore &&
+      danger <= OPERATOR_SURFACE_THRESHOLDS.maxDanger
     );
 
     if (isStage4Cleared && isExecutionReady && isGateQualified) {
@@ -57,45 +64,45 @@ export class NearSignalEngine {
       };
     }
 
-    // 1. EVALUATE HARD DISQUALIFIERS (Any hard disqualifier immediately rules out NEAR-SIGNAL)
-    const danger = candidate.dangerComposition?.total ?? candidate.contract.danger ?? 0;
-    const isHardDanger = danger > 45;
+    // 1. EVALUATE HARD DISQUALIFIERS (Any hard blocker immediately rules out NEAR-SIGNAL)
+    const isHardDanger = danger > OPERATOR_SURFACE_THRESHOLDS.maxDanger || candidate.dangerComposition?.isHardBlocked === true;
     const isVetoed = Boolean(
       candidate.blocked ||
       candidate.clearance?.state === "BLOCKED" ||
       candidate.vetoResolution?.hasVeto ||
-      candidate.governance?.allowTrade === false
+      candidate.governance?.allowTrade === false ||
+      candidate.veto?.hard
     );
     const sampleSize = candidate.contract.n || candidate.intel?.ticks || 0;
-    const isThinSample = sampleSize < 60;
-    const hasMajorContradictions = (candidate.contract.contradiction ?? 0) > 2 || (candidate.contract.conflicts?.length ?? 0) > 2;
+    const isThinSample = sampleSize < OPERATOR_SURFACE_THRESHOLDS.minTicks;
+    const hasMajorContradictions = (candidate.contract.contradiction ?? 0) > OPERATOR_SURFACE_THRESHOLDS.maxContradiction || (candidate.contract.conflicts?.length ?? 0) > 2;
     const isBrokenDirection = candidate.direction?.state === "OPPOSED" || candidate.direction?.broken === true;
-    const isHostileRegime = candidate.contract.regimeCompatible === false;
+    const isHostileRegime = candidate.contract.regimeCompatible === false || candidate.contract.fakeEdge?.verdict === "REJECTED";
     const isCircuitBreakerTripped = candidate.finalDecision?.circuitBreaker?.tripped === true;
 
     if (isHardDanger) {
-      missingConditions.push(`Danger ${danger}/100 exceeds maximum safety ceiling (45)`);
+      missingConditions.push(`Danger ${danger}/100 exceeds maximum safety ceiling (${OPERATOR_SURFACE_THRESHOLDS.maxDanger})`);
     }
     if (isVetoed) {
       missingConditions.push("Active hard veto in place");
     }
     if (isThinSample) {
-      missingConditions.push(`Sample size (${sampleSize}) below minimum required observations (60)`);
+      missingConditions.push(`Sample size (${sampleSize}) below minimum required observations (${OPERATOR_SURFACE_THRESHOLDS.minTicks})`);
     }
     if (hasMajorContradictions) {
-      missingConditions.push(`High contradiction level (${candidate.contract.contradiction})`);
+      missingConditions.push(`High contradiction level (${candidate.contract.contradiction}%)`);
     }
     if (isBrokenDirection) {
       missingConditions.push("Structural directional spine is broken or opposed");
     }
     if (isHostileRegime) {
-      missingConditions.push("Market regime incompatible with contract structure");
+      missingConditions.push("Market regime or edge validation rejected");
     }
     if (isCircuitBreakerTripped) {
       missingConditions.push("Session circuit breaker is tripped");
     }
 
-    // If any hard disqualifier exists, it is NOT a Near-Signal
+    // If any hard disqualifier exists, it is strictly NOT a Near-Signal
     if (
       isHardDanger ||
       isVetoed ||
@@ -116,19 +123,23 @@ export class NearSignalEngine {
       };
     }
 
-    // 2. EVALUATE POSITIVE EVIDENCE CONVICTION
-    let positiveCount = 0;
+    // 2. EVALUATE POSITIVE EVIDENCE CONVICTION FROM AUTHORITATIVE ENGINES
+    let hasDirectionConviction = false;
+    let hasPsychologyConviction = false;
+    let hasPressureConviction = false;
+    let hasAgreementConviction = false;
+    let hasScoreBaseline = false;
 
     // A. Structural Direction Alignment
     const directionSide = candidate.direction?.direction ?? candidate.intel?.pressure?.bias;
     const contractSide = candidate.contract.side;
-    if (directionSide === contractSide) {
-      positiveCount++;
-      strengths.push(`Direction: ${contractSide} supported by 1,000-tick spine`);
+    if (directionSide === contractSide && candidate.direction?.state !== "WEAK") {
+      hasDirectionConviction = true;
+      strengths.push(`Direction: ${contractSide} supported by 1,000-tick spine (${candidate.direction?.state ?? "CONFIRMED"})`);
       factors.push({
         code: "NS_DIRECTION",
         label: "Directional Spine Alignment",
-        points: 20,
+        points: Math.round(candidate.direction?.score ?? 20),
         measuredValue: contractSide,
         detail: "1,000-tick structural trend aligned with contract side.",
       });
@@ -139,15 +150,15 @@ export class NearSignalEngine {
     const psychScore = psych?.supportScore ?? 0;
     const psychDominance = psych?.winningSideDominance ?? false;
     const hasGreenBar = Boolean(candidate.intel?.bars?.green && candidate.contract.winners.includes(candidate.intel.bars.green));
-    if (psychScore >= 60 || psychDominance || hasGreenBar) {
-      positiveCount++;
-      strengths.push(`Digit Psychology: Strong winning zone structure (${psychScore > 0 ? psychScore : 65}/100)`);
+    if (psychScore > 0 || psychDominance || hasGreenBar) {
+      hasPsychologyConviction = true;
+      strengths.push(`Digit Psychology: Favorable winning zone structure (${psychScore > 0 ? psychScore : 65}/100)`);
       factors.push({
         code: "NS_PSYCHOLOGY",
         label: "Digit Psychology",
-        points: 25,
+        points: Math.max(15, psychScore),
         measuredValue: `${psychScore}/100`,
-        detail: "Digit frequency and winning zone momentum strongly favorable.",
+        detail: "Digit frequency and winning zone momentum favorable.",
       });
     }
 
@@ -155,7 +166,7 @@ export class NearSignalEngine {
     const confirmsStructure = candidate.priceAction?.confirmsStructure !== false;
     const noPressureThreat = candidate.priceAction?.losingSidePressure?.state !== "ACTIVE_THREAT";
     if (confirmsStructure && noPressureThreat) {
-      positiveCount++;
+      hasPressureConviction = true;
       strengths.push("Pressure: Lower-timeframe (120-tick) pressure confirms structure");
       factors.push({
         code: "NS_PRESSURE",
@@ -167,38 +178,37 @@ export class NearSignalEngine {
     }
 
     // D. Cross-Engine Agreement & Confidence
-    const agreement = candidate.agreement;
+    const agreement = candidate.agreement ?? "SUPPORT";
     const confidence = candidate.evidence?.confidence ?? candidate.contract.confidence ?? 0;
-    if ((agreement === "SUPPORT" || agreement === "NEUTRAL") && confidence >= 60) {
-      positiveCount++;
+    if (agreement !== "CONFLICT" && confidence >= 50) {
+      hasAgreementConviction = true;
       strengths.push(`Engine Agreement: ${agreement} (Confidence: ${confidence.toFixed(0)}%)`);
       factors.push({
         code: "NS_AGREEMENT",
         label: "Engine Confluence",
-        points: 20,
-        measuredValue: `${confidence}%`,
-        detail: `High multi-engine agreement (${agreement}) and statistical confidence.`,
+        points: Math.round(confidence / 4),
+        measuredValue: `${confidence.toFixed(0)}%`,
+        detail: `Multi-engine consensus (${agreement}) and statistical confidence.`,
       });
     }
 
-    // E. Acceptable Danger Floor
-    if (danger <= 38) {
-      positiveCount++;
-      strengths.push(`Danger: ${danger}/100 (Well within safety limit)`);
-      factors.push({
-        code: "NS_SAFETY",
-        label: "Danger Ceiling",
-        points: 15,
-        measuredValue: `${danger}/100`,
-        detail: "Low anomaly, volatility, and digit risk profile.",
-      });
+    // E. Opportunity Score Baseline
+    if (candidate.score >= OPERATOR_SURFACE_THRESHOLDS.watchScoreFloor) {
+      hasScoreBaseline = true;
+      strengths.push(`Score: ${candidate.score.toFixed(0)}/100 meets opportunity watch floor`);
     }
 
-    // 3. IDENTIFY SPECIFIC NARROW EXECUTION GAP
+    // 3. IDENTIFY SPECIFIC REMAINING EXECUTION GAPS (FROM REAL BLOCKERS)
+    if (candidate.finalDecision?.verdict === "HELD_UNCONFIRMED_SIGNIFICANCE") {
+      missingConditions.push("Stage 4 multiple-testing FDR significance unconfirmed across candidate population");
+    }
+    if (candidate.finalDecision?.verdict === "HELD_EXPOSURE_CAP") {
+      missingConditions.push("Stage 4 portfolio exposure ceiling reached for correlation group");
+    }
     if (candidate.entryPoint?.status === "WAIT") {
       missingConditions.push("Entry trigger touch not yet confirmed on preferred digit");
     }
-    if (candidate.signal?.state === "VALID_WAIT_ENTRY") {
+    if (candidate.signal?.state === "VALID_WAIT_ENTRY" || candidate.signal?.waitForEntry) {
       missingConditions.push("Awaiting valid entry timing window");
     }
     if (candidate.entryClearance?.verdict === "WAIT") {
@@ -210,10 +220,15 @@ export class NearSignalEngine {
       });
     }
 
-    // NEAR-SIGNAL requires at least 3 strong positive evidence points AND at least one identified narrow gap
-    const isNearSignal = positiveCount >= 3 && missingConditions.length > 0;
+    // A genuine NEAR-SIGNAL must have strong foundational evidence AND an identifiable remaining execution gap
+    const hasStrongFoundationalEvidence =
+      hasDirectionConviction &&
+      hasPsychologyConviction &&
+      hasPressureConviction &&
+      hasAgreementConviction &&
+      hasScoreBaseline;
 
-    if (isNearSignal) {
+    if (hasStrongFoundationalEvidence && missingConditions.length > 0) {
       return {
         isNearSignal: true,
         verdict: "NEAR_SIGNAL",
@@ -221,7 +236,7 @@ export class NearSignalEngine {
         strengths,
         missingConditions,
         factors,
-        summary: `NEAR SIGNAL: Strong evidence across ${positiveCount} engines; awaiting ${missingConditions[0]}.`,
+        summary: `NEAR-SIGNAL: Strong foundational evidence across Sentinel engines; awaiting ${missingConditions[0]}.`,
       };
     }
 
@@ -230,9 +245,9 @@ export class NearSignalEngine {
       verdict: "NOT_NEAR_SIGNAL",
       isExecutable: false,
       strengths,
-      missingConditions: missingConditions.length > 0 ? missingConditions : ["Insufficient positive evidence conviction across engines."],
+      missingConditions: missingConditions.length > 0 ? missingConditions : ["Insufficient foundational evidence conviction across engines."],
       factors,
-      summary: "Candidate lacks sufficient multi-engine strength to qualify as Near-Signal.",
+      summary: "Candidate lacks sufficient foundational multi-engine strength to qualify as Near-Signal.",
     };
   }
 }

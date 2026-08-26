@@ -675,6 +675,64 @@ describe("Section 20: Diagnostic NEAR-SIGNAL Tests", () => {
     expect(ns.verdict).toBe("EXECUTABLE");
   });
 
+  it("Test D2: Hard blockers (danger > 45, thin sample, broken direction, circuit breaker, high contradiction) strictly prevent Near-Signal", () => {
+    // 1. Extreme danger
+    const dangerousCand: Partial<RankedOpportunity> = {
+      symbol: "R_100",
+      contract: { id: "UNDER_7" as any, label: "Under 7", side: "UNDER", theoretical: 0.7, empirical: 0.78, n: 1000, danger: 65 } as any,
+      score: 85,
+      dangerComposition: { total: 65 } as any,
+      direction: { direction: "UNDER", state: "CONFIRMED" } as any,
+      digitPsychology: { winningSideDominance: true, supportScore: 80 } as any,
+    };
+    expect(NearSignalEngine.evaluate(dangerousCand as RankedOpportunity).isNearSignal).toBe(false);
+
+    // 2. Thin sample
+    const thinCand: Partial<RankedOpportunity> = {
+      symbol: "R_100",
+      contract: { id: "UNDER_7" as any, label: "Under 7", side: "UNDER", theoretical: 0.7, empirical: 0.78, n: 8, danger: 15 } as any,
+      score: 85,
+      dangerComposition: { total: 15 } as any,
+      direction: { direction: "UNDER", state: "CONFIRMED" } as any,
+      digitPsychology: { winningSideDominance: true, supportScore: 80 } as any,
+    };
+    expect(NearSignalEngine.evaluate(thinCand as RankedOpportunity).isNearSignal).toBe(false);
+
+    // 3. Broken / opposed direction
+    const brokenDirCand: Partial<RankedOpportunity> = {
+      symbol: "R_100",
+      contract: { id: "UNDER_7" as any, label: "Under 7", side: "UNDER", theoretical: 0.7, empirical: 0.78, n: 1000, danger: 15 } as any,
+      score: 85,
+      dangerComposition: { total: 15 } as any,
+      direction: { direction: "OVER", state: "OPPOSED", broken: true } as any,
+      digitPsychology: { winningSideDominance: true, supportScore: 80 } as any,
+    };
+    expect(NearSignalEngine.evaluate(brokenDirCand as RankedOpportunity).isNearSignal).toBe(false);
+
+    // 4. Circuit breaker tripped
+    const cbCand: Partial<RankedOpportunity> = {
+      symbol: "R_100",
+      contract: { id: "UNDER_7" as any, label: "Under 7", side: "UNDER", theoretical: 0.7, empirical: 0.78, n: 1000, danger: 15 } as any,
+      score: 85,
+      dangerComposition: { total: 15 } as any,
+      direction: { direction: "UNDER", state: "CONFIRMED" } as any,
+      digitPsychology: { winningSideDominance: true, supportScore: 80 } as any,
+      finalDecision: { circuitBreaker: { tripped: true, reason: "Max drawdown exceeded" } } as any,
+    };
+    expect(NearSignalEngine.evaluate(cbCand as RankedOpportunity).isNearSignal).toBe(false);
+
+    // 5. Severe contradiction
+    const contraCand: Partial<RankedOpportunity> = {
+      symbol: "R_100",
+      contract: { id: "UNDER_7" as any, label: "Under 7", side: "UNDER", theoretical: 0.7, empirical: 0.78, n: 1000, danger: 15, contradiction: 55 } as any,
+      score: 85,
+      dangerComposition: { total: 15 } as any,
+      direction: { direction: "UNDER", state: "CONFIRMED" } as any,
+      digitPsychology: { winningSideDominance: true, supportScore: 80 } as any,
+    };
+    expect(NearSignalEngine.evaluate(contraCand as RankedOpportunity).isNearSignal).toBe(false);
+  });
+
   it("Test E & F: Stage 4 never promotes Near-Signal and maintains rank order", () => {
     const nearSignalCand: Partial<RankedOpportunity> = {
       symbol: "R_100",
