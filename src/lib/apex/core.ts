@@ -231,10 +231,6 @@ class ApexCore {
       clearTimeout(this.timer);
       this.timer = null;
     }
-    if (this.visibilityBound && typeof document !== "undefined") {
-      document.removeEventListener("visibilitychange", this.onVisibility);
-      this.visibilityBound = false;
-    }
     this.unsubBus.forEach((u) => u());
     this.unsubBus = [];
     this.inFlight = false;
