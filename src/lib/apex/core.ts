@@ -213,18 +213,8 @@ class ApexCore {
     );
 
     if (this.timer) clearTimeout(this.timer);
-    if (typeof document !== "undefined" && !this.visibilityBound) {
-      this.visibilityBound = true;
-      document.addEventListener("visibilitychange", this.onVisibility);
-    }
     this.schedule(0);
   }
-
-  /** Pause all analysis while the tab is hidden; resume promptly when shown. */
-  private onVisibility = () => {
-    if (this.refs <= 0) return;
-    if (document.visibilityState === "visible") this.schedule(0);
-  };
 
   /** Self-scheduling loop — never overlaps, and backs off when cycles are slow. */
   private schedule(delay: number) {
