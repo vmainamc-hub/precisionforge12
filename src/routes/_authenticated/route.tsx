@@ -1,6 +1,5 @@
 import { createFileRoute, Outlet } from "@tanstack/react-router";
 import { useEffect } from "react";
-import { apexCore } from "@/lib/apex/core";
 import { startApexCloudSync, stopApexCloudSync } from "@/lib/apex/cloud";
 import { startJournalSync } from "@/lib/apex/journal";
 import { startFeedbackSync, stopFeedbackSync } from "@/lib/sentinel/feedback-cloud";
@@ -12,13 +11,12 @@ export const Route = createFileRoute("/_authenticated")({
 });
 
 /**
- * Sentinel's intelligence core and per-market contract simulators are retained
- * at the application level: they keep observing ticks, evaluating entry gates
- * and resolving paper contracts even when the Sentinel page is not mounted.
+ * AppShell manages application-wide persistence and sync.
+ * ApexCore is NOT retained globally here; its lifecycle is route-scoped so that
+ * continuous multi-market analysis runs ONLY when Sentinel / Apex is active.
  */
 function AppShell() {
   useEffect(() => {
-    apexCore.retain();
     // Durable, per-market persistence of everything Sentinel learns. Falls back
     // to local-only learning (and reports it) when nobody is signed in.
     void startApexCloudSync();

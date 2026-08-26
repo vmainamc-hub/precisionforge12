@@ -146,19 +146,23 @@ export class NearSignalEngine {
     }
 
     // B. Digit Psychology Alignment
+    // Must rely on authoritative digit-psychology engine output.
+    // Green-bar presence alone or arbitrary flags do NOT establish directional psychology support.
     const psych = candidate.digitPsychology;
-    const psychScore = psych?.supportScore ?? 0;
-    const psychDominance = psych?.winningSideDominance ?? false;
-    const hasGreenBar = Boolean(candidate.intel?.bars?.green && candidate.contract.winners.includes(candidate.intel.bars.green));
-    if (psychScore > 0 || psychDominance || hasGreenBar) {
+    const isPsychSupportive = Boolean(
+      psych &&
+      !psych.hardBlock &&
+      (psych.verdict === "SUPPORT" || (psych.score >= 65 && psych.verdict !== "CONFLICT"))
+    );
+    if (isPsychSupportive) {
       hasPsychologyConviction = true;
-      strengths.push(`Digit Psychology: Favorable winning zone structure (${psychScore > 0 ? psychScore : 65}/100)`);
+      strengths.push(`Digit Psychology: ${psych.verdict} (${psych.score}/100) on canonical 1,000-tick distribution`);
       factors.push({
         code: "NS_PSYCHOLOGY",
         label: "Digit Psychology",
-        points: Math.max(15, psychScore),
-        measuredValue: `${psychScore}/100`,
-        detail: "Digit frequency and winning zone momentum favorable.",
+        points: Math.max(15, Math.round((psych.score ?? 65) * 0.3)),
+        measuredValue: `${psych.score}/100`,
+        detail: psych.summary || "Canonical digit frequency and zone momentum favorable.",
       });
     }
 

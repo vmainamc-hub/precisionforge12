@@ -88,9 +88,10 @@ class ApexCore {
   private unsubBus: (() => void)[] = [];
   private cursor = 0;
   private refs = 0;
-  private retained = false;
   private status: BusStatus = "idle";
   private version = 0;
+  private inFlight = false;
+  private pendingCycle = false;
 
   /** Deep digit history for a market (up to 5000 ticks). */
   getDeepDigits(symbol: string): number[] {
@@ -105,6 +106,14 @@ class ApexCore {
     return this.version;
   }
 
+  getRefCount(): number {
+    return this.refs;
+  }
+
+  isActive(): boolean {
+    return this.refs > 0 && this.timer !== null;
+  }
+
   getAll(): MarketIntel[] {
     return APEX_UNIVERSE.map((s) => this.intel.get(s.symbol)).filter((x): x is MarketIntel =>
       Boolean(x),
@@ -117,27 +126,44 @@ class ApexCore {
 
   subscribe(fn: () => void): () => void {
     this.listeners.add(fn);
-    this.start();
+    const release = this.retain();
     return () => {
       this.listeners.delete(fn);
-      this.stop();
+      release();
     };
   }
 
   /**
-   * Application-level lifecycle. Called once when the app shell mounts so the
-   * intelligence core and every market simulator keep running regardless of
-   * which page is open or how often a component re-renders. Never released.
+   * Route-scoped lifecycle retention. Increments the reference count.
+   * Starts background processing when references transition from 0 to 1.
+   * Returns a cleanup release function.
    */
-  retain() {
-    if (this.retained) return;
-    this.retained = true;
-    this.start();
+  retain(): () => void {
+    this.refs++;
+    if (this.refs === 1) {
+      this.start();
+    }
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      this.release();
+    };
+  }
+
+  /**
+   * Releases a reference to the core. Decrements reference count safely.
+   * When references reach 0, completely halts all continuous background timers,
+   * in-flight cycles, and bus subscriptions.
+   */
+  release(): void {
+    this.refs = Math.max(0, this.refs - 1);
+    if (this.refs === 0) {
+      this.stop();
+    }
   }
 
   private start() {
-    this.refs++;
-    if (this.refs > 1) return;
     const symbols = APEX_UNIVERSE.map((s) => s.symbol).filter(isApexSymbol);
     // Every valid market owns a live simulator state from the moment Sentinel
     // starts — not from the moment it becomes the top candidate.
@@ -183,18 +209,21 @@ class ApexCore {
       }),
     );
 
+    if (this.timer) clearInterval(this.timer);
     this.timer = setInterval(() => this.cycle(), RECOMPUTE_MS);
     // Prime immediately with whatever history the bus already holds.
     this.cycle();
   }
 
   private stop() {
-    this.refs = Math.max(0, this.refs - 1);
-    if (this.refs > 0) return;
-    if (this.timer) clearInterval(this.timer);
-    this.timer = null;
+    if (this.timer) {
+      clearInterval(this.timer);
+      this.timer = null;
+    }
     this.unsubBus.forEach((u) => u());
     this.unsubBus = [];
+    this.inFlight = false;
+    this.pendingCycle = false;
   }
 
   private emit() {
@@ -219,33 +248,57 @@ class ApexCore {
   }
 
   private cycle() {
-    const slice: string[] = [];
-    for (let i = 0; i < BATCH; i++) {
-      const s = APEX_UNIVERSE[(this.cursor + i) % APEX_UNIVERSE.length];
-      slice.push(s.symbol);
+    if (this.refs <= 0) return;
+    // IN-FLIGHT COALESCING: If an expensive cycle is still executing, do NOT launch
+    // another full computation concurrently. Mark that a fresh cycle was requested.
+    if (this.inFlight) {
+      this.pendingCycle = true;
+      return;
     }
-    this.cursor = (this.cursor + BATCH) % APEX_UNIVERSE.length;
-    for (const sym of slice) this.analyse(sym);
+    this.inFlight = true;
+    this.pendingCycle = false;
 
-    // Continuous observation layer tick update to advance state machines and expire execution windows
     try {
-      observationEngine.tick(Date.now());
-      const health = observationEngine.getHealthStatus();
-      engineHealth.set(
-        "Observation Engine",
-        health.status === "HEALTHY"
-          ? "ONLINE"
-          : health.status === "DEGRADED"
-            ? "DEGRADED"
-            : "ERROR",
-        health.message,
-      );
-    } catch (err) {
-      observationEngine.recordIngestError(err);
-      engineHealth.set("Observation Engine", "ERROR", String(err));
-    }
+      const slice: string[] = [];
+      for (let i = 0; i < BATCH; i++) {
+        const s = APEX_UNIVERSE[(this.cursor + i) % APEX_UNIVERSE.length];
+        slice.push(s.symbol);
+      }
+      this.cursor = (this.cursor + BATCH) % APEX_UNIVERSE.length;
+      for (const sym of slice) {
+        if (this.refs <= 0) break;
+        this.analyse(sym);
+      }
 
-    this.emit();
+      if (this.refs > 0) {
+        // Continuous observation layer tick update to advance state machines and expire execution windows
+        try {
+          observationEngine.tick(Date.now());
+          const health = observationEngine.getHealthStatus();
+          engineHealth.set(
+            "Observation Engine",
+            health.status === "HEALTHY"
+              ? "ONLINE"
+              : health.status === "DEGRADED"
+                ? "DEGRADED"
+                : "ERROR",
+            health.message,
+          );
+        } catch (err) {
+          observationEngine.recordIngestError(err);
+          engineHealth.set("Observation Engine", "ERROR", String(err));
+        }
+
+        this.emit();
+      }
+    } finally {
+      this.inFlight = false;
+      // If another cycle was requested while in-flight and consumers still exist, execute the coalesced cycle.
+      if (this.pendingCycle && this.refs > 0) {
+        this.pendingCycle = false;
+        setTimeout(() => this.cycle(), 0);
+      }
+    }
   }
 
   /** Append a live tick into the extended 5000-tick buffers. */
@@ -264,7 +317,21 @@ class ApexCore {
     this.deepPrices.set(sym, prices);
   }
 
-  private analyse(symbol: string) {
+  reset(): void {
+    this.stop();
+    this.refs = 0;
+    this.intel.clear();
+    this.lastTickAt.clear();
+    this.tickCount.clear();
+    this.deepDigits.clear();
+    this.deepPrices.clear();
+    this.ensembleCache.clear();
+    this.pending.clear();
+    this.cursor = 0;
+    this.version = 0;
+  }
+
+  analyse(symbol: string) {
     if (!isApexSymbol(symbol)) return;
     const meta = APEX_UNIVERSE.find((s) => s.symbol === symbol);
     if (!meta) return;
