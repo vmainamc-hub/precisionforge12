@@ -209,22 +209,45 @@ class ApexCore {
       }),
     );
 
-    if (this.timer) clearInterval(this.timer);
-    this.timer = setInterval(() => this.cycle(), RECOMPUTE_MS);
-    // Prime immediately with whatever history the bus already holds.
-    this.cycle();
+    if (this.timer) clearTimeout(this.timer);
+    if (typeof document !== "undefined" && !this.visibilityBound) {
+      this.visibilityBound = true;
+      document.addEventListener("visibilitychange", this.onVisibility);
+    }
+    this.schedule(0);
+  }
+
+  /** Pause all analysis while the tab is hidden; resume promptly when shown. */
+  private onVisibility = () => {
+    if (this.refs <= 0) return;
+    if (document.visibilityState === "visible") this.schedule(0);
+  };
+
+  /** Self-scheduling loop — never overlaps, and backs off when cycles are slow. */
+  private schedule(delay: number) {
+    if (this.refs <= 0) return;
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = setTimeout(() => {
+      this.timer = null;
+      void this.cycle();
+    }, delay);
   }
 
   private stop() {
     if (this.timer) {
-      clearInterval(this.timer);
+      clearTimeout(this.timer);
       this.timer = null;
+    }
+    if (this.visibilityBound && typeof document !== "undefined") {
+      document.removeEventListener("visibilitychange", this.onVisibility);
+      this.visibilityBound = false;
     }
     this.unsubBus.forEach((u) => u());
     this.unsubBus = [];
     this.inFlight = false;
     this.pendingCycle = false;
   }
+
 
   private emit() {
     this.version++;
