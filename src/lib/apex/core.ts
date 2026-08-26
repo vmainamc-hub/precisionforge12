@@ -92,7 +92,6 @@ class ApexCore {
   private version = 0;
   private inFlight = false;
   private pendingCycle = false;
-  private visibilityBound = false;
   /** Rolling average cost of one cycle (ms) — drives adaptive back-off. */
   private avgCycleMs = 0;
 
@@ -214,18 +213,8 @@ class ApexCore {
     );
 
     if (this.timer) clearTimeout(this.timer);
-    if (typeof document !== "undefined" && !this.visibilityBound) {
-      this.visibilityBound = true;
-      document.addEventListener("visibilitychange", this.onVisibility);
-    }
     this.schedule(0);
   }
-
-  /** Pause all analysis while the tab is hidden; resume promptly when shown. */
-  private onVisibility = () => {
-    if (this.refs <= 0) return;
-    if (document.visibilityState === "visible") this.schedule(0);
-  };
 
   /** Self-scheduling loop — never overlaps, and backs off when cycles are slow. */
   private schedule(delay: number) {
@@ -241,10 +230,6 @@ class ApexCore {
     if (this.timer) {
       clearTimeout(this.timer);
       this.timer = null;
-    }
-    if (this.visibilityBound && typeof document !== "undefined") {
-      document.removeEventListener("visibilitychange", this.onVisibility);
-      this.visibilityBound = false;
     }
     this.unsubBus.forEach((u) => u());
     this.unsubBus = [];
@@ -287,12 +272,6 @@ class ApexCore {
 
   private async cycle() {
     if (this.refs <= 0) return;
-    // Never analyse while the tab is hidden — this is what was pinning the CPU
-    // in the background and starving other apps.
-    if (typeof document !== "undefined" && document.visibilityState === "hidden") {
-      this.schedule(1000);
-      return;
-    }
     // IN-FLIGHT COALESCING: If an expensive cycle is still executing, do NOT launch
     // another full computation concurrently. Mark that a fresh cycle was requested.
     if (this.inFlight) {
