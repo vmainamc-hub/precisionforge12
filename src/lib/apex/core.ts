@@ -84,7 +84,7 @@ class ApexCore {
   private deepPrices = new Map<string, number[]>();
   private ensembleCache = new Map<string, EnsembleCache>();
   private listeners = new Set<() => void>();
-  private timer: ReturnType<typeof setInterval> | null = null;
+  private timer: ReturnType<typeof setTimeout> | null = null;
   private unsubBus: (() => void)[] = [];
   private cursor = 0;
   private refs = 0;
@@ -92,6 +92,10 @@ class ApexCore {
   private version = 0;
   private inFlight = false;
   private pendingCycle = false;
+  private visibilityBound = false;
+  /** Rolling average cost of one cycle (ms) — drives adaptive back-off. */
+  private avgCycleMs = 0;
+
 
   /** Deep digit history for a market (up to 5000 ticks). */
   getDeepDigits(symbol: string): number[] {
