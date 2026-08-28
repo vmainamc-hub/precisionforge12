@@ -472,6 +472,8 @@ export class EntryLab {
   private live = new Map<string, EntryContext>(); // latest context per `${symbol}:${contract}`
   private seq = 0;
   private listeners = new Set<() => void>();
+  private ledgerVersion = 0;
+  private statsCache = new Map<string, { version: number; stats: EntryConditionStats[] }>();
 
   getConfig() {
     return this.config;
@@ -520,7 +522,10 @@ export class EntryLab {
       this.open.delete(key);
       changed = true;
     }
-    if (changed) this.emit();
+    if (changed) {
+      this.ledgerVersion++;
+      this.emit();
+    }
   }
 
   /** Build the causal context for one contract from the current market state. */
@@ -558,6 +563,7 @@ export class EntryLab {
   consider(intel: MarketIntel, digits: number[], contracts?: ContractEval[]) {
     if (intel.dataState !== "OK") return;
     const list = contracts ?? intel.contracts;
+    let added = false;
     for (const c of list) {
       const ctx = this.buildContext(intel, c, digits);
       if (ctx.lastDigit < 0) continue;
@@ -603,22 +609,33 @@ export class EntryLab {
         };
         this.open.set(key, trade);
         this.ledger.push(trade);
+        added = true;
       }
     }
     if (this.ledger.length > LEDGER_CAP) this.ledger.splice(0, this.ledger.length - LEDGER_CAP);
+    if (added) this.ledgerVersion++;
   }
 
   /** Every tested entry rule for ONE market/contract, strongest evidence first. */
   statsFor(symbol: string, contract: ApexContractId, theoretical: number): EntryConditionStats[] {
+    const cacheKey = `${symbol}:${contract}:${theoretical}`;
+    const cached = this.statsCache.get(cacheKey);
+    if (cached && cached.version === this.ledgerVersion) {
+      return cached.stats;
+    }
+
     const scoped = this.ledger.filter((t) => t.symbol === symbol && t.contract === contract);
     const label = scoped[0]?.contractLabel ?? contract;
-    return ENTRY_RULES.map((r) =>
+    const computed = ENTRY_RULES.map((r) =>
       summarise(
         { symbol, contract, contractLabel: label, rule: r.id },
         scoped.filter((t) => t.rule === r.id),
         theoretical,
       ),
     ).sort((a, b) => b.score - a.score || b.n - a.n);
+
+    this.statsCache.set(cacheKey, { version: this.ledgerVersion, stats: computed });
+    return computed;
   }
 
   /**
@@ -697,6 +714,8 @@ export class EntryLab {
     this.ledger = [];
     this.open.clear();
     this.live.clear();
+    this.ledgerVersion++;
+    this.statsCache.clear();
     this.emit();
   }
 }

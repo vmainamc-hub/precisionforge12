@@ -187,6 +187,12 @@ export class ObservationCell {
 
   /** §22.3/§22.6 integration point: call once per tick/scan with mapped engine evidence. */
   ingest(input: EngineEvidenceInput): ObservationDossier {
+    // Idempotency: Protect against duplicate ingestion of the exact same tick timestamp
+    if (this.lastInput && this.lastInput.timestamp === input.timestamp && input.timestamp > 0) {
+      const existing = this.getDossier();
+      if (existing) return existing;
+    }
+
     this.tickCounter += 1;
     if (this.createdAtTimestamp === 0) {
       this.createdAtTimestamp = input.timestamp;

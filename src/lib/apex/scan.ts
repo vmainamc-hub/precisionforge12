@@ -161,7 +161,7 @@ export function rankOpportunities(
 ): { ranked: RankedOpportunity[]; rejected: ScanResult["rejected"] } {
   const rejected: ScanResult["rejected"] = [];
 
-  // Ingest all active market intels into the 90-cell Observation Engine
+  // Ingest all active market intels into the 90-cell Observation Engine (idempotent on unchanged ticks)
   for (const intel of intels) {
     if (intel.dataState === "UNAVAILABLE") {
       rejected.push({ symbol: intel.symbol, contract: "—", reason: "DATA UNAVAILABLE" });

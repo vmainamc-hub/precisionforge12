@@ -438,7 +438,14 @@ export class ObservationEngine {
     qualification: QualifiedOpportunity | undefined;
   } {
     const id = `${marketId}:${proposition}` as CellId;
-    const cell = this.cells.get(id)!;
+    const cell = this.cells.get(id);
+    if (!cell) {
+      return {
+        dossier: null,
+        events: [],
+        qualification: undefined,
+      };
+    }
     return {
       dossier: cell.getDossier(),
       events: cell.getEvents(),

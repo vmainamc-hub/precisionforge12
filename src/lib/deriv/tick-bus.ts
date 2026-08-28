@@ -60,6 +60,7 @@ class DerivTickBus {
   private pingTimer: ReturnType<typeof setInterval> | null = null;
   private watchdogTimer: ReturnType<typeof setInterval> | null = null;
   private endpointIndex = 0;
+  private connectionGen = 0;
 
   private envHooked = false;
   private wakeLock: any = null;
@@ -221,6 +222,7 @@ class DerivTickBus {
     }
 
     this.setStatus("connecting");
+    const gen = ++this.connectionGen;
     const activeUrl = DERIV_FALLBACK_ENDPOINTS[this.endpointIndex % DERIV_FALLBACK_ENDPOINTS.length];
     
     let ws: WebSocket;
@@ -236,6 +238,7 @@ class DerivTickBus {
 
     // Handshake Timeout Guard: if connection hangs in CONNECTING state, abort and failover
     this.handshakeTimer = setTimeout(() => {
+      if (this.connectionGen !== gen) return;
       this.handshakeTimer = null;
       if (ws.readyState === WebSocket.CONNECTING) {
         try {
@@ -247,6 +250,7 @@ class DerivTickBus {
     }, HANDSHAKE_TIMEOUT_MS);
 
     ws.onopen = () => {
+      if (this.connectionGen !== gen) return;
       if (this.handshakeTimer) {
         clearTimeout(this.handshakeTimer);
         this.handshakeTimer = null;
@@ -255,15 +259,24 @@ class DerivTickBus {
       this.reconnectDelay = 1000;
       this.subIds.clear();
       this.lastMessageAt = Date.now();
-      for (const sym of this.refcount.keys()) {
-        this.sendHistoryRequest(sym);
-        this.sendSubscribeRequest(sym);
-      }
+      
+      const symbols = Array.from(this.refcount.keys());
+      symbols.forEach((sym, idx) => {
+        // Stagger history fetches across short ticks to prevent socket buffer congestion
+        setTimeout(() => {
+          if (this.connectionGen === gen && this.ws?.readyState === WebSocket.OPEN) {
+            this.sendHistoryRequest(sym);
+            this.sendSubscribeRequest(sym);
+          }
+        }, idx * 25);
+      });
+
       this.startPing();
       this.startWatchdog();
     };
 
     ws.onmessage = (ev) => {
+      if (this.connectionGen !== gen) return;
       this.lastMessageAt = Date.now();
       let msg: any;
       try {
@@ -297,11 +310,13 @@ class DerivTickBus {
         return;
       }
 
-      if (msg.msg_type === "history" && msg.history && msg.echo_req?.ticks_history) {
-        const sym = msg.echo_req.ticks_history as string;
+      if (msg.msg_type === "history" && msg.history) {
+        const sym = (msg.echo_req?.ticks_history || msg.history?.symbol || msg.symbol) as string;
+        if (!sym) return;
         if (msg.pip_size !== undefined) this.setPip(sym, Number(msg.pip_size));
         const { prices, times } = msg.history as { prices: number[]; times: number[] };
-        const isSeed = (msg.echo_req.count ?? 0) >= HISTORY_COUNT;
+        if (!prices || !times) return;
+        const isSeed = (msg.echo_req?.count ?? 0) >= HISTORY_COUNT;
         const prev = this.buffers.get(sym) ?? [];
         const lastKnown = this.lastEpoch.get(sym) ?? 0;
         const fresh: Tick[] = [];
@@ -335,6 +350,7 @@ class DerivTickBus {
     };
 
     ws.onerror = () => {
+      if (this.connectionGen !== gen) return;
       if (this.handshakeTimer) {
         clearTimeout(this.handshakeTimer);
         this.handshakeTimer = null;
@@ -343,6 +359,7 @@ class DerivTickBus {
     };
 
     ws.onclose = () => {
+      if (this.connectionGen !== gen) return;
       if (this.handshakeTimer) {
         clearTimeout(this.handshakeTimer);
         this.handshakeTimer = null;

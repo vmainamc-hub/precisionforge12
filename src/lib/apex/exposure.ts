@@ -77,21 +77,46 @@ function longestRun(digits: number[], d: number): number {
  * appearances followed in the next 10 ticks.
  */
 function burstBehaviour(digits: number[], d: number, burst: number) {
-  if (burst < 2) return { continuation: -1, n: 0, damage: 0 };
+  if (burst < 2 || digits.length < 20) return { continuation: -1, n: 0, damage: 0 };
   let n = 0;
   let cont = 0;
   let damage = 0;
-  for (let i = 10; i < digits.length - 10; i++) {
-    let count = 0;
-    for (let k = i - 10; k < i; k++) if (digits[k] === d) count++;
-    if (count !== burst) continue;
-    n++;
-    const next5 = digits.slice(i, i + 5);
-    if (next5.includes(d)) cont++;
-    let after = 0;
-    for (let k = i; k < i + 10; k++) if (digits[k] === d) after++;
-    damage += after;
+
+  // Initialize rolling count of d in the initial 10-tick window [0 .. 10)
+  let count = 0;
+  for (let k = 0; k < 10; k++) {
+    if (digits[k] === d) count++;
   }
+
+  const len = digits.length;
+  const maxI = len - 10;
+
+  for (let i = 10; i < maxI; i++) {
+    if (count === burst) {
+      n++;
+      const lim5 = Math.min(len, i + 5);
+      let hasNext5 = false;
+      for (let k = i; k < lim5; k++) {
+        if (digits[k] === d) {
+          hasNext5 = true;
+          break;
+        }
+      }
+      if (hasNext5) cont++;
+
+      const lim10 = Math.min(len, i + 10);
+      let after = 0;
+      for (let k = i; k < lim10; k++) {
+        if (digits[k] === d) after++;
+      }
+      damage += after;
+    }
+
+    // Slide window for next step: remove digits[i-10], add digits[i]
+    if (digits[i - 10] === d) count--;
+    if (digits[i] === d) count++;
+  }
+
   return { continuation: n >= 12 ? cont / n : -1, n, damage: n ? damage / n : 0 };
 }
 
