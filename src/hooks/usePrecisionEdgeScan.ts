@@ -57,12 +57,11 @@ export function usePrecisionEdgeScan(config: TerminalConfig): ScanState {
 
   const ticksRef = useRef<Record<string, Tick[]>>({});
   const enginesRef = useRef<Record<string, PrecisionEdgeEngine>>({});
-  const wsRef = useRef<WebSocket | null>(null);
-  const pingSentRef = useRef<number>(0);
   const latencyRef = useRef<number>(0);
   const bestKeyRef = useRef<string | null>(null);
   const bestEdgeRef = useRef<number>(0);
   const configRef = useRef<TerminalConfig>(config);
+  const pulseTimerRef = useRef<number | null>(null);
 
   // Keep engines' config in sync with the terminal controls.
   useEffect(() => {
@@ -143,7 +142,13 @@ export function usePrecisionEdgeScan(config: TerminalConfig): ScanState {
       scanning: true,
     }));
     // Drop the scanning pulse shortly after.
-    window.setTimeout(() => setState((p) => ({ ...p, scanning: false })), 650);
+    if (pulseTimerRef.current !== null) {
+      window.clearTimeout(pulseTimerRef.current);
+    }
+    pulseTimerRef.current = window.setTimeout(() => {
+      pulseTimerRef.current = null;
+      setState((p) => ({ ...p, scanning: false }));
+    }, 650);
   }, []);
 
   // Tick ingestion via shared Deriv bus.
@@ -189,6 +194,10 @@ export function usePrecisionEdgeScan(config: TerminalConfig): ScanState {
     const unsubSym = derivBus.subscribe(PE_SYMBOLS.map((s) => s.symbol));
 
     return () => {
+      if (pulseTimerRef.current !== null) {
+        window.clearTimeout(pulseTimerRef.current);
+        pulseTimerRef.current = null;
+      }
       unsubTick();
       unsubHistory();
       unsubStatus();

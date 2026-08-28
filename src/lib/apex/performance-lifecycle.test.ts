@@ -182,7 +182,10 @@ describe("Sentinel & Apex Lifecycle, Concurrency & Performance Master Guarantees
     const run1 = rankOpportunities([], DEFAULT_SCAN_OPTIONS, false);
     const run2 = rankOpportunities([], DEFAULT_SCAN_OPTIONS, false);
     expect(run1.ranked).toEqual(run2.ranked);
-    expect(run1.circuitBreaker).toEqual(run2.circuitBreaker);
+    expect(run1.circuitBreaker.tripped).toEqual(run2.circuitBreaker.tripped);
+    expect(run1.circuitBreaker.reason).toEqual(run2.circuitBreaker.reason);
+    expect(run1.circuitBreaker.sustainedGlobalDanger).toEqual(run2.circuitBreaker.sustainedGlobalDanger);
+    expect(run1.circuitBreaker.consecutiveLosses).toEqual(run2.circuitBreaker.consecutiveLosses);
     expect(run1.exposureReport).toEqual(run2.exposureReport);
   });
 

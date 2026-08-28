@@ -4,26 +4,41 @@
 //   * ONE connection instead of 6-8 concurrent ones
 //   * ONE tick history request per symbol instead of duplicated requests
 //   * A single shared in-memory tick buffer per symbol
-//   * Automatic reconnection with exponential backoff
+//   * Automatic reconnection with exponential backoff & multi-endpoint failover
+//   * High-performance batch-trimmed buffers preventing main-thread freeze
 //   * Consistent status reporting across hooks
 //
 // This bus uses Deriv's live `ticks` subscription (anonymous, allowed for
 // public volatility indices). A short poll fallback kicks in only if we go
 // silent for too long (dead-socket detector).
 import type { Tick } from "@/lib/analytics";
-
 import { DERIV_WS_URL } from "@/lib/deriv-ws";
 
-const WS_URL = DERIV_WS_URL;
+export const DERIV_FALLBACK_ENDPOINTS = [
+  "wss://ws.derivws.com/websockets/v3?app_id=1089",
+  DERIV_WS_URL,
+  "wss://ws.binaryws.com/websockets/v3?app_id=1089",
+];
+
 const MAX_BUFFER = 1000;
+const BUFFER_OVERHEAD = 64; // Batch trim margin: trims once every 64 ticks instead of O(N) shift per tick
 const HISTORY_COUNT = 1000; // canonical standard window — one request fills it exactly
-const STALE_TICK_MS = 4_000; // if no tick for a subscribed symbol in this time, force a catch-up poll
+const STALE_TICK_MS = 3_500; // if no tick for a subscribed symbol in this time, force a catch-up poll
 const CATCHUP_COUNT = 20;
+const HANDSHAKE_TIMEOUT_MS = 6_000; // auto-switch endpoint if handshake takes longer than 6s
+const PING_INTERVAL_MS = 12_000;
+const DEAD_SOCKET_TIMEOUT_MS = 18_000;
 
 export type BusStatus = "idle" | "connecting" | "live" | "error";
 type TickListener = (symbol: string, tick: Tick) => void;
 type HistoryListener = (symbol: string, ticks: Tick[]) => void;
 type StatusListener = (s: BusStatus) => void;
+
+// Fast lookup for powers of 10 to avoid Math.pow on every single streaming tick
+const POW10_CACHE = [1, 10, 100, 1000, 10000, 100000, 1000000];
+function getPow10(pip: number): number {
+  return (pip >= 0 && pip < POW10_CACHE.length) ? POW10_CACHE[pip] : Math.pow(10, pip);
+}
 
 class DerivTickBus {
   private ws: WebSocket | null = null;
@@ -31,47 +46,54 @@ class DerivTickBus {
   private refcount = new Map<string, number>();
   private buffers = new Map<string, Tick[]>();
   // Incremental last-digit buffer, kept in lockstep with `buffers`.
-  // Every scanner used to recompute `ticks.map(t => lastDigit(t.price))` —
-  // often several times per contract, per symbol, per frame. Maintaining it
-  // once here turns that O(n) work into O(1) per tick.
   private digitBuffers = new Map<string, number[]>();
   private subIds = new Map<string, string>(); // symbol -> live subscription id
   private lastEpoch = new Map<string, number>(); // symbol -> last tick epoch (seconds)
   private lastMessageAt = 0;
+  private lastPingSentAt = 0;
   private tickListeners = new Set<TickListener>();
   private historyListeners = new Set<HistoryListener>();
   private statusListeners = new Set<StatusListener>();
   private reconnectDelay = 1000;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private handshakeTimer: ReturnType<typeof setTimeout> | null = null;
   private pingTimer: ReturnType<typeof setInterval> | null = null;
   private watchdogTimer: ReturnType<typeof setInterval> | null = null;
+  private endpointIndex = 0;
 
   private envHooked = false;
   private wakeLock: any = null;
 
-  getStatus() {
+  getStatus(): BusStatus {
     return this.status;
   }
 
   getTicks(sym: string): Tick[] {
-    return this.buffers.get(sym) ?? [];
+    const buf = this.buffers.get(sym);
+    if (!buf) return [];
+    if (buf.length > MAX_BUFFER) {
+      return buf.slice(buf.length - MAX_BUFFER);
+    }
+    return buf;
   }
 
   /** Rolling last-digit array for a symbol, aligned 1:1 with getTicks(). */
   getDigits(sym: string): number[] {
-    return this.digitBuffers.get(sym) ?? [];
+    const d = this.digitBuffers.get(sym);
+    if (!d) return [];
+    if (d.length > MAX_BUFFER) {
+      return d.slice(d.length - MAX_BUFFER);
+    }
+    return d;
   }
 
   // Deriv quotes have different decimal precision per symbol (pip size).
-  // The last *digit* of a contract is the final decimal of the quote at that
-  // precision — using a fixed 2 decimals produced garbage digits (and fake
-  // 100% win rates) on symbols like 1HZ250V. pip_size arrives with both the
-  // history and tick payloads; default to 2 until we have it.
   private pipSize = new Map<string, number>();
 
   private digitOf(sym: string, price: number): number {
     const pip = this.pipSize.get(sym) ?? 2;
-    return Math.abs(Math.round(price * Math.pow(10, pip))) % 10;
+    const factor = getPow10(pip);
+    return Math.abs(Math.round(price * factor)) % 10;
   }
 
   /** Record pip size; rebuild the digit buffer when the precision changes. */
@@ -86,18 +108,36 @@ class DerivTickBus {
     return this.pipSize.get(sym) ?? 2;
   }
 
-  private setBuffer(sym: string, ticks: Tick[]) {
-    this.buffers.set(sym, ticks);
-    const digits = new Array<number>(ticks.length);
-    for (let i = 0; i < ticks.length; i++) digits[i] = this.digitOf(sym, ticks[i].price);
+  public setBuffer(sym: string, ticks: Tick[]) {
+    const trimmed = ticks.length > MAX_BUFFER ? ticks.slice(ticks.length - MAX_BUFFER) : [...ticks];
+    this.buffers.set(sym, trimmed);
+    const digits = new Array<number>(trimmed.length);
+    for (let i = 0; i < trimmed.length; i++) {
+      digits[i] = this.digitOf(sym, trimmed[i].price);
+    }
     this.digitBuffers.set(sym, digits);
   }
 
-  private pushDigit(sym: string, tick: Tick, max: number) {
-    const d = this.digitBuffers.get(sym) ?? [];
+  private appendTick(sym: string, tick: Tick) {
+    let buf = this.buffers.get(sym);
+    if (!buf) {
+      buf = [];
+      this.buffers.set(sym, buf);
+    }
+    buf.push(tick);
+    if (buf.length > MAX_BUFFER + BUFFER_OVERHEAD) {
+      buf.splice(0, buf.length - MAX_BUFFER);
+    }
+
+    let d = this.digitBuffers.get(sym);
+    if (!d) {
+      d = [];
+      this.digitBuffers.set(sym, d);
+    }
     d.push(this.digitOf(sym, tick.price));
-    if (d.length > max) d.splice(0, d.length - max);
-    this.digitBuffers.set(sym, d);
+    if (d.length > MAX_BUFFER + BUFFER_OVERHEAD) {
+      d.splice(0, d.length - MAX_BUFFER);
+    }
   }
 
   onTick(cb: TickListener): () => void {
@@ -108,7 +148,9 @@ class DerivTickBus {
   onHistory(cb: HistoryListener): () => void {
     this.historyListeners.add(cb);
     // Replay any histories we already have so late subscribers catch up.
-    for (const [sym, ticks] of this.buffers.entries()) cb(sym, ticks);
+    for (const [sym, ticks] of this.buffers.entries()) {
+      cb(sym, ticks.length > MAX_BUFFER ? ticks.slice(ticks.length - MAX_BUFFER) : ticks);
+    }
     return () => this.historyListeners.delete(cb);
   }
 
@@ -130,8 +172,9 @@ class DerivTickBus {
       }
       const existing = this.buffers.get(s);
       if (existing && existing.length) {
+        const payload = existing.length > MAX_BUFFER ? existing.slice(existing.length - MAX_BUFFER) : existing;
         queueMicrotask(() => {
-          this.historyListeners.forEach((l) => l(s, existing));
+          this.historyListeners.forEach((l) => l(s, payload));
         });
       }
     }
@@ -172,18 +215,42 @@ class DerivTickBus {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
     }
+    if (this.handshakeTimer) {
+      clearTimeout(this.handshakeTimer);
+      this.handshakeTimer = null;
+    }
+
     this.setStatus("connecting");
+    const activeUrl = DERIV_FALLBACK_ENDPOINTS[this.endpointIndex % DERIV_FALLBACK_ENDPOINTS.length];
+    
     let ws: WebSocket;
     try {
-      ws = new WebSocket(WS_URL);
+      ws = new WebSocket(activeUrl);
     } catch {
       this.setStatus("error");
+      this.endpointIndex++;
       this.scheduleReconnect();
       return;
     }
     this.ws = ws;
 
+    // Handshake Timeout Guard: if connection hangs in CONNECTING state, abort and failover
+    this.handshakeTimer = setTimeout(() => {
+      this.handshakeTimer = null;
+      if (ws.readyState === WebSocket.CONNECTING) {
+        try {
+          ws.close();
+        } catch {}
+        this.endpointIndex++;
+        this.scheduleReconnect();
+      }
+    }, HANDSHAKE_TIMEOUT_MS);
+
     ws.onopen = () => {
+      if (this.handshakeTimer) {
+        clearTimeout(this.handshakeTimer);
+        this.handshakeTimer = null;
+      }
       this.setStatus("live");
       this.reconnectDelay = 1000;
       this.subIds.clear();
@@ -204,10 +271,11 @@ class DerivTickBus {
       } catch {
         return;
       }
-      if (msg.pong || msg.msg_type === "ping") return;
+      if (msg.pong || msg.msg_type === "ping" || msg.ping) {
+        return;
+      }
 
       if (msg.error) {
-        // Subscribe rejected → we still have polling fallback via watchdog.
         return;
       }
 
@@ -220,13 +288,11 @@ class DerivTickBus {
         const lastKnown = this.lastEpoch.get(sym) ?? 0;
         if (!Number.isFinite(epoch) || !Number.isFinite(price)) return;
         if (epoch <= lastKnown) return;
+        
         const tk: Tick = { t: epoch * 1000, price };
-        const buf = this.buffers.get(sym) ?? [];
-        buf.push(tk);
-        if (buf.length > MAX_BUFFER) buf.shift();
-        this.buffers.set(sym, buf);
-        this.pushDigit(sym, tk, MAX_BUFFER);
+        this.appendTick(sym, tk);
         this.lastEpoch.set(sym, epoch);
+        
         this.tickListeners.forEach((l) => l(sym, tk));
         return;
       }
@@ -239,47 +305,60 @@ class DerivTickBus {
         const prev = this.buffers.get(sym) ?? [];
         const lastKnown = this.lastEpoch.get(sym) ?? 0;
         const fresh: Tick[] = [];
+        
         for (let i = 0; i < prices.length; i++) {
           const epoch = times[i];
-          if (epoch > lastKnown) fresh.push({ t: epoch * 1000, price: Number(prices[i]) });
+          if (epoch > lastKnown) {
+            fresh.push({ t: epoch * 1000, price: Number(prices[i]) });
+          }
         }
+        
         if (isSeed || prev.length === 0) {
           const seed: Tick[] = new Array(prices.length);
           for (let i = 0; i < prices.length; i++) {
             seed[i] = { t: times[i] * 1000, price: Number(prices[i]) };
           }
-          const trimmed = seed.length > MAX_BUFFER ? seed.slice(-MAX_BUFFER) : seed;
-          this.setBuffer(sym, trimmed);
+          this.setBuffer(sym, seed);
           if (times.length) this.lastEpoch.set(sym, times[times.length - 1]);
-          this.historyListeners.forEach((l) => l(sym, trimmed));
+          const currentBuf = this.getTicks(sym);
+          this.historyListeners.forEach((l) => l(sym, currentBuf));
         } else if (fresh.length) {
-          const buf = prev.slice();
           for (const tk of fresh) {
-            buf.push(tk);
-            if (buf.length > MAX_BUFFER) buf.shift();
-            this.pushDigit(sym, tk, MAX_BUFFER);
+            this.appendTick(sym, tk);
           }
-          this.buffers.set(sym, buf);
           this.lastEpoch.set(sym, times[times.length - 1]);
-          for (const tk of fresh) this.tickListeners.forEach((l) => l(sym, tk));
+          for (const tk of fresh) {
+            this.tickListeners.forEach((l) => l(sym, tk));
+          }
         }
       }
     };
 
     ws.onerror = () => {
+      if (this.handshakeTimer) {
+        clearTimeout(this.handshakeTimer);
+        this.handshakeTimer = null;
+      }
       this.setStatus("error");
     };
 
     ws.onclose = () => {
+      if (this.handshakeTimer) {
+        clearTimeout(this.handshakeTimer);
+        this.handshakeTimer = null;
+      }
       this.stopPing();
       this.stopWatchdog();
       this.ws = null;
       this.subIds.clear();
+      
       if (this.refcount.size === 0) {
         this.setStatus("idle");
         return;
       }
+      
       this.setStatus("error");
+      this.endpointIndex++; // Try alternate endpoint on failure
       this.scheduleReconnect();
     };
   }
@@ -288,7 +367,7 @@ class DerivTickBus {
     if (this.reconnectTimer) return;
     if (this.refcount.size === 0) return;
     const delay = this.reconnectDelay;
-    this.reconnectDelay = Math.min(15_000, this.reconnectDelay * 2);
+    this.reconnectDelay = Math.min(10_000, this.reconnectDelay * 1.5);
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
       this.connect();
@@ -297,38 +376,46 @@ class DerivTickBus {
 
   private sendHistoryRequest(sym: string) {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
-    this.ws.send(
-      JSON.stringify({
-        ticks_history: sym,
-        adjust_start_time: 1,
-        count: HISTORY_COUNT,
-        end: "latest",
-        style: "ticks",
-      }),
-    );
+    try {
+      this.ws.send(
+        JSON.stringify({
+          ticks_history: sym,
+          adjust_start_time: 1,
+          count: HISTORY_COUNT,
+          end: "latest",
+          style: "ticks",
+        }),
+      );
+    } catch {}
   }
 
   private sendSubscribeRequest(sym: string) {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
-    this.ws.send(JSON.stringify({ ticks: sym, subscribe: 1 }));
+    try {
+      this.ws.send(JSON.stringify({ ticks: sym, subscribe: 1 }));
+    } catch {}
   }
 
   private sendCatchupRequest(sym: string) {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
-    this.ws.send(
-      JSON.stringify({
-        ticks_history: sym,
-        adjust_start_time: 1,
-        count: CATCHUP_COUNT,
-        end: "latest",
-        style: "ticks",
-      }),
-    );
+    try {
+      this.ws.send(
+        JSON.stringify({
+          ticks_history: sym,
+          adjust_start_time: 1,
+          count: CATCHUP_COUNT,
+          end: "latest",
+          style: "ticks",
+        }),
+      );
+    } catch {}
   }
 
   private sendForget(subId: string) {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
-    this.ws.send(JSON.stringify({ forget: subId }));
+    try {
+      this.ws.send(JSON.stringify({ forget: subId }));
+    } catch {}
   }
 
   private forgetSymbol(sym: string) {
@@ -343,10 +430,11 @@ class DerivTickBus {
     this.pingTimer = setInterval(() => {
       if (this.ws?.readyState === WebSocket.OPEN) {
         try {
+          this.lastPingSentAt = Date.now();
           this.ws.send(JSON.stringify({ ping: 1 }));
         } catch {}
       }
-    }, 15_000);
+    }, PING_INTERVAL_MS);
   }
 
   private stopPing() {
@@ -358,25 +446,31 @@ class DerivTickBus {
 
   private startWatchdog() {
     this.stopWatchdog();
-    // Every 3s, check symbols that have gone silent for too long. Fire a
-    // catch-up history request (cheap) to fill any gap, without disturbing
-    // the live subscription.
+    // Every 2.5s, check socket health and stale symbols.
     this.watchdogTimer = setInterval(() => {
       const now = Date.now();
-      // Dead-socket detector: no message of any kind for 30s → reconnect.
-      if (this.ws?.readyState === WebSocket.OPEN && now - this.lastMessageAt > 30_000) {
+      
+      // Proactive Dead-socket detector:
+      // If we are subscribed to symbols and have received no messages for DEAD_SOCKET_TIMEOUT_MS,
+      // or if ping was sent > 7s ago with zero response, force reconnect.
+      const pingUnanswered = this.lastPingSentAt > 0 && now - this.lastPingSentAt > 7_000 && this.lastMessageAt < this.lastPingSentAt;
+      const socketSilent = this.refcount.size > 0 && this.lastMessageAt > 0 && now - this.lastMessageAt > DEAD_SOCKET_TIMEOUT_MS;
+
+      if (this.ws?.readyState === WebSocket.OPEN && (pingUnanswered || socketSilent)) {
         try {
           this.ws.close();
         } catch {}
         return;
       }
+
+      // Check per-symbol lag and trigger catch-up requests
       for (const sym of this.refcount.keys()) {
         const lastEpochMs = (this.lastEpoch.get(sym) ?? 0) * 1000;
         if (lastEpochMs && now - lastEpochMs > STALE_TICK_MS) {
           this.sendCatchupRequest(sym);
         }
       }
-    }, 3_000);
+    }, 2_500);
   }
 
   private stopWatchdog() {
@@ -391,19 +485,19 @@ class DerivTickBus {
     this.envHooked = true;
 
     const kick = () => {
-      // Reconnect immediately if the socket died; otherwise ask for a catch-up
-      // so any gap while the tab was backgrounded fills instantly.
       if (
         !this.ws ||
         this.ws.readyState === WebSocket.CLOSED ||
         this.ws.readyState === WebSocket.CLOSING
       ) {
-        this.reconnectDelay = 500;
+        this.reconnectDelay = 100;
         this.ensureConnection();
         return;
       }
       if (this.ws.readyState === WebSocket.OPEN) {
-        for (const sym of this.refcount.keys()) this.sendCatchupRequest(sym);
+        for (const sym of this.refcount.keys()) {
+          this.sendCatchupRequest(sym);
+        }
       }
     };
 
@@ -435,3 +529,4 @@ class DerivTickBus {
 }
 
 export const derivBus = new DerivTickBus();
+
