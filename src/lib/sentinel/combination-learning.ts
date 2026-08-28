@@ -16,6 +16,7 @@
 // configurable half-life, and all reported figures are weighted figures with
 // their weighted sample size attached.
 import type { SimTrade } from "../apex/simulator";
+import { safeStorage, safeJsonParse } from "@/lib/storage-fallback";
 
 export type ComboState =
   "UNTESTED" | "TESTING" | "PROMISING" | "VALIDATED" | "DETERIORATING" | "FAILING";
@@ -443,31 +444,39 @@ class CombinationLearning {
     return added;
   }
 
+  private persistTimer: ReturnType<typeof setTimeout> | null = null;
+
   /** Local cache so a reload never starts from zero, even signed out. */
   loadCache() {
-    if (this.loaded || typeof window === "undefined") return;
+    if (this.loaded) return;
     this.loaded = true;
     try {
-      const raw = window.localStorage.getItem(CACHE_KEY);
-      if (raw) this.hydrate(JSON.parse(raw) as ComboSerialised);
+      const raw = safeStorage.getItem(CACHE_KEY);
+      if (raw) {
+        const parsed = safeJsonParse<ComboSerialised | null>(raw, null);
+        if (parsed) this.hydrate(parsed);
+      }
     } catch {
       /* corrupt cache is discarded, never fatal */
     }
   }
 
   private persistCache() {
-    if (typeof window === "undefined") return;
-    try {
-      window.localStorage.setItem(CACHE_KEY, JSON.stringify(this.serialise()));
-    } catch {
-      /* quota — durable copy lives in the cloud layer */
-    }
+    if (this.persistTimer) return;
+    this.persistTimer = setTimeout(() => {
+      this.persistTimer = null;
+      try {
+        safeStorage.setItem(CACHE_KEY, JSON.stringify(this.serialise()));
+      } catch {
+        /* quota — durable copy lives in the cloud layer */
+      }
+    }, 2000);
   }
 
   reset() {
     this.buckets.clear();
     this.dirtyKeys.clear();
-    if (typeof window !== "undefined") window.localStorage.removeItem(CACHE_KEY);
+    safeStorage.removeItem(CACHE_KEY);
     this.emit();
   }
 }

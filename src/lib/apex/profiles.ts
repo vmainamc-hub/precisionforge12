@@ -12,9 +12,12 @@
 // The profile is persisted, so accumulated learning survives a restart.
 import { apexSimulator, type SimTrade } from "./simulator";
 import type { ApexContractId } from "./types";
+import { safeStorage, safeJsonParse } from "@/lib/storage-fallback";
 
 const KEY = "apex.profiles.v1";
 const SAVE_DEBOUNCE = 4000;
+const MAX_INGESTED_SET = 1000;
+const MAX_PENDING_MAP = 500;
 
 export interface Bucket {
   key: string;
@@ -74,12 +77,12 @@ function emit() {
 }
 
 function load() {
-  if (loaded || typeof window === "undefined") return;
+  if (loaded) return;
   loaded = true;
   try {
-    const raw = window.localStorage.getItem(KEY);
+    const raw = safeStorage.getItem(KEY);
     if (raw) {
-      const parsed = JSON.parse(raw) as Store;
+      const parsed = safeJsonParse<Store | null>(raw, null);
       if (parsed && parsed.markets) store = parsed;
     }
   } catch {
@@ -88,13 +91,12 @@ function load() {
 }
 
 function save() {
-  if (typeof window === "undefined") return;
   if (saveTimer) return;
   saveTimer = setTimeout(() => {
     saveTimer = null;
     try {
       store.updatedAt = Date.now();
-      window.localStorage.setItem(KEY, JSON.stringify(store));
+      safeStorage.setItem(KEY, JSON.stringify(store));
     } catch {
       /* quota — keep learning in memory */
     }
@@ -141,6 +143,10 @@ class ProfileStore {
   /** Record the state that existed when a paper trade was opened. */
   captureEntry(tradeId: string, ctx: EntryContext) {
     if (pending.has(tradeId) || ingested.has(tradeId)) return;
+    if (pending.size > MAX_PENDING_MAP) {
+      const firstKey = pending.keys().next().value;
+      if (firstKey) pending.delete(firstKey);
+    }
     pending.set(tradeId, ctx);
   }
 
@@ -153,6 +159,10 @@ class ProfileStore {
       if (ingested.has(t.id)) continue;
       const ctx = pending.get(t.id);
       ingested.add(t.id);
+      if (ingested.size > MAX_INGESTED_SET) {
+        const firstKey = ingested.keys().next().value;
+        if (firstKey) ingested.delete(firstKey);
+      }
       pending.delete(t.id);
       const symbol = t.symbol;
       const p = store.markets[symbol] ?? blankProfile(symbol, t.market);

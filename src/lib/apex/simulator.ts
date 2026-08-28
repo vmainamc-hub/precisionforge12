@@ -17,6 +17,7 @@
 // invents a trade, and never fabricates wins or losses.
 import type { ApexContractId, ContractEval, MarketIntel } from "./types";
 import { entryLab, type EntryRuleId } from "./entry-conditions";
+import { safeStorage, safeJsonParse } from "@/lib/storage-fallback";
 
 export type SimResult = "OPEN" | "WIN" | "LOSS";
 
@@ -482,12 +483,16 @@ class ApexSimulator {
   // ── Persistence ─────────────────────────────────────────────────────
   /** Restore the resolved ledgers so a UI remount cannot erase the record. */
   restore() {
-    if (this.restored || typeof window === "undefined") return;
+    if (this.restored) return;
     this.restored = true;
     try {
-      const raw = window.localStorage.getItem(STORE_KEY);
+      const raw = safeStorage.getItem(STORE_KEY);
       if (!raw) return;
-      const parsed = JSON.parse(raw) as { books?: Record<string, SimTrade[]>; trades?: SimTrade[] };
+      const parsed = safeJsonParse<{ books?: Record<string, SimTrade[]>; trades?: SimTrade[] } | null>(
+        raw,
+        null,
+      );
+      if (!parsed) return;
       this.books.clear();
       // v3 shape: already partitioned per market.
       for (const [sym, trades] of Object.entries(parsed.books ?? {})) {
@@ -510,7 +515,6 @@ class ApexSimulator {
   }
 
   private persist() {
-    if (typeof window === "undefined") return;
     if (this.saveTimer) return;
     this.saveTimer = setTimeout(() => {
       this.saveTimer = null;
@@ -518,7 +522,7 @@ class ApexSimulator {
         const books: Record<string, SimTrade[]> = {};
         for (const [sym, trades] of this.books)
           books[sym] = trades.filter((t) => t.result !== "OPEN").slice(-LEDGER_CAP);
-        window.localStorage.setItem(STORE_KEY, JSON.stringify({ books }));
+        safeStorage.setItem(STORE_KEY, JSON.stringify({ books }));
       } catch {
         /* quota — the in-memory record remains authoritative */
       }

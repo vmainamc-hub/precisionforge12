@@ -14,6 +14,7 @@ import {
   removeDirectivesBySource,
 } from "./immediate-guidance";
 import { observationEngine, resolveExactProposition } from "./observation/observationEngine";
+import { safeStorage, safeJsonParse } from "@/lib/storage-fallback";
 
 const KEY = "sentinel.trade-feedback.v1";
 const MAX_TRADES = 1000;
@@ -145,11 +146,13 @@ function blank(): Store {
 function load(): Store {
   if (store) return store;
   store = blank();
-  if (typeof window === "undefined") return store;
   try {
-    const raw = window.localStorage.getItem(KEY);
+    const raw = safeStorage.getItem(KEY);
     if (raw) {
-      const parsed = JSON.parse(raw) as Omit<Partial<Store>, "version"> & { version?: number };
+      const parsed = safeJsonParse<(Omit<Partial<Store>, "version"> & { version?: number }) | null>(
+        raw,
+        null,
+      );
       // MIGRATION: v1 stores (trades only) load unchanged and gain observations.
       if (
         parsed &&
@@ -194,12 +197,10 @@ function persist() {
   if (store.observations.length > MAX_OBSERVATIONS) {
     store.observations.splice(0, store.observations.length - MAX_OBSERVATIONS);
   }
-  if (typeof window !== "undefined") {
-    try {
-      window.localStorage.setItem(KEY, JSON.stringify(store));
-    } catch {
-      /* quota — in-memory learning still works for this session */
-    }
+  try {
+    safeStorage.setItem(KEY, JSON.stringify(store));
+  } catch {
+    /* quota — in-memory learning still works for this session */
   }
   sink?.(store.trades, store.observations);
   emit();

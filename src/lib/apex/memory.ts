@@ -2,9 +2,12 @@
 // Everything in here is learned from ticks this app actually observed.
 // Nothing is seeded, invented, or back-filled with fake outcomes.
 import type { ApexContractId, ContractEval, MarketIntel } from "./types";
+import { safeStorage, safeJsonParse } from "@/lib/storage-fallback";
 
 const KEY = "apex.memory.v1";
 const SAVE_DEBOUNCE = 4000;
+const MAX_ANALOGUE_KEYS = 1000;
+const MAX_CALIBRATION_KEYS = 200;
 
 interface Bucket {
   n: number;
@@ -24,12 +27,12 @@ let loaded = false;
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
 
 function load() {
-  if (loaded || typeof window === "undefined") return;
+  if (loaded) return;
   loaded = true;
   try {
-    const raw = window.localStorage.getItem(KEY);
+    const raw = safeStorage.getItem(KEY);
     if (raw) {
-      const parsed = JSON.parse(raw) as MemoryShape;
+      const parsed = safeJsonParse<MemoryShape | null>(raw, null);
       if (parsed && parsed.analogue) mem = parsed;
     }
   } catch {
@@ -37,18 +40,32 @@ function load() {
   }
 }
 
+function pruneAnalogueIfNeeded() {
+  const keys = Object.keys(mem.analogue);
+  if (keys.length > MAX_ANALOGUE_KEYS) {
+    // Sort keys by sample size ascending and drop the least observed
+    keys.sort((a, b) => (mem.analogue[a]?.n ?? 0) - (mem.analogue[b]?.n ?? 0));
+    const toRemove = keys.length - MAX_ANALOGUE_KEYS;
+    for (let i = 0; i < toRemove; i++) {
+      delete mem.analogue[keys[i]];
+    }
+  }
+}
+
 function scheduleSave() {
-  if (typeof window === "undefined" || saveTimer) return;
+  if (saveTimer) return;
   saveTimer = setTimeout(() => {
     saveTimer = null;
     mem.updatedAt = Date.now();
+    pruneAnalogueIfNeeded();
     try {
-      window.localStorage.setItem(KEY, JSON.stringify(mem));
+      safeStorage.setItem(KEY, JSON.stringify(mem));
     } catch {
       /* quota — memory stays in RAM for this session */
     }
   }, SAVE_DEBOUNCE);
 }
+
 
 function bucketOf(v: number, edges: number[]): number {
   let i = 0;
@@ -129,7 +146,7 @@ export function memoryStats() {
 
 export function resetMemory() {
   mem = { analogue: {}, calibration: {}, updatedAt: Date.now() };
-  if (typeof window !== "undefined") window.localStorage.removeItem(KEY);
+  safeStorage.removeItem(KEY);
 }
 
 /** Snapshot for durable (database) persistence. */

@@ -4,6 +4,7 @@
  */
 
 import { ContractType } from "../../types/sentinel";
+import { safeStorage, safeJsonParse } from "@/lib/storage-fallback";
 
 /**
  * Persisted live observation state (Table: `observation_state`)
@@ -49,7 +50,8 @@ export interface PersistedObservationEvent {
 
 const STATE_STORAGE_KEY = "apex_sentinel_observation_state_v1";
 const EVENT_STORAGE_KEY = "apex_sentinel_observation_event_v1";
-const MAX_STORED_EVENTS = 500;
+const MAX_STORED_EVENTS = 100;
+const DEBOUNCE_MS = 1500;
 
 /**
  * ObservationPersistenceAdapter
@@ -61,27 +63,35 @@ class ObservationPersistenceAdapter {
   private stateCache: Map<string, PersistedObservationState> = new Map();
   private eventLog: PersistedObservationEvent[] = [];
   private isLoaded = false;
+  private saveTimeout: ReturnType<typeof setTimeout> | null = null;
+  private eventSaveTimeout: ReturnType<typeof setTimeout> | null = null;
 
   constructor() {
     this.loadFromStorage();
   }
 
   private loadFromStorage(): void {
-    if (typeof window === "undefined") return;
     try {
-      const stateRaw = localStorage.getItem(STATE_STORAGE_KEY);
+      const stateRaw = safeStorage.getItem(STATE_STORAGE_KEY);
       if (stateRaw) {
-        const list: PersistedObservationState[] = JSON.parse(stateRaw);
-        list.forEach((row) => this.stateCache.set(row.id, row));
+        const list = safeJsonParse<PersistedObservationState[]>(stateRaw, []);
+        if (Array.isArray(list)) {
+          list.forEach((row) => {
+            if (row && row.id) this.stateCache.set(row.id, row);
+          });
+        }
       }
 
-      const eventRaw = localStorage.getItem(EVENT_STORAGE_KEY);
+      const eventRaw = safeStorage.getItem(EVENT_STORAGE_KEY);
       if (eventRaw) {
-        this.eventLog = JSON.parse(eventRaw);
+        const parsedEvents = safeJsonParse<PersistedObservationEvent[]>(eventRaw, []);
+        if (Array.isArray(parsedEvents)) {
+          this.eventLog = parsedEvents.slice(0, MAX_STORED_EVENTS);
+        }
       }
       this.isLoaded = true;
     } catch {
-      // Fallback silently if storage is restricted
+      // Fallback silently
     }
   }
 
@@ -139,28 +149,27 @@ class ObservationPersistenceAdapter {
       .slice(0, limit);
   }
 
-  private saveTimeout: any = null;
   private persistStateDebounced(): void {
-    if (typeof window === "undefined") return;
-    if (this.saveTimeout) clearTimeout(this.saveTimeout);
+    if (this.saveTimeout) return;
     this.saveTimeout = setTimeout(() => {
+      this.saveTimeout = null;
       try {
         const list = Array.from(this.stateCache.values());
-        localStorage.setItem(STATE_STORAGE_KEY, JSON.stringify(list));
+        safeStorage.setItem(STATE_STORAGE_KEY, JSON.stringify(list));
       } catch {}
-    }, 500);
+    }, DEBOUNCE_MS);
   }
 
-  private eventSaveTimeout: any = null;
   private persistEventsDebounced(): void {
-    if (typeof window === "undefined") return;
-    if (this.eventSaveTimeout) clearTimeout(this.eventSaveTimeout);
+    if (this.eventSaveTimeout) return;
     this.eventSaveTimeout = setTimeout(() => {
+      this.eventSaveTimeout = null;
       try {
-        localStorage.setItem(EVENT_STORAGE_KEY, JSON.stringify(this.eventLog));
+        safeStorage.setItem(EVENT_STORAGE_KEY, JSON.stringify(this.eventLog.slice(0, MAX_STORED_EVENTS)));
       } catch {}
-    }, 500);
+    }, DEBOUNCE_MS);
   }
 }
 
 export const observationPersistence = new ObservationPersistenceAdapter();
+

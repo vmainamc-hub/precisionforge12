@@ -281,8 +281,12 @@ export async function startApexCloudSync(): Promise<void> {
   // The local cache is loaded first so learning survives even signed out.
   comboLearning.loadCache();
 
-  const { data } = await supabase.auth.getUser();
-  userId = data.user?.id ?? null;
+  try {
+    const { data } = await supabase.auth.getUser();
+    userId = data.user?.id ?? null;
+  } catch {
+    userId = null;
+  }
   if (!userId) {
     // Anonymous session: learning continues locally and says so.
     patch({ phase: "LOCAL", error: null });
