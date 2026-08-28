@@ -16,6 +16,7 @@ import type {
   MarketRegime,
 } from "../../types/sentinel";
 import type { LosingSidePressure } from "./losing-side-pressure";
+import { operatorSpecialDigitAction } from "./operator-special-digits";
 
 export type DangerSeverity = "MILD" | "MODERATE" | "HIGH" | "SEVERE" | "AUTO_BLOCK";
 
@@ -73,6 +74,7 @@ export interface DangerInputs {
   lifetime?: any;
   recent?: any;
   timeframeConflict?: boolean;
+  operatorSpecial?: any;
 }
 
 const SENSITIVE_DIGITS = [0, 1, 8, 9];
@@ -359,6 +361,28 @@ function evaluateDanger(input: DangerInputs): DangerComposition {
       value: "ELEVATED",
       detail: "Extreme market risk detected in outer edge digits (0/1/8/9).",
     });
+  }
+
+  // 11. Special Digit 1 (OVER) / 8 (UNDER) abnormal activity on losing side
+  const watchedSpecialDigit = input.contract.side === "OVER" ? 1 : 8;
+  const watchedOnLosing = !input.contract.winners.includes(watchedSpecialDigit);
+  if (watchedOnLosing) {
+    const specialRead =
+      input.operatorSpecial ??
+      (input.intel
+        ? operatorSpecialDigitAction(input.contract.side, input.contract.winners, input.intel)
+        : null);
+    if (specialRead && specialRead.state === "ABNORMAL") {
+      const isCritical = specialRead.action >= 80;
+      addComp({
+        code: `SPECIAL_DIGIT_ABNORMAL_${watchedSpecialDigit}`,
+        label: `Special digit ${watchedSpecialDigit} abnormal losing activity`,
+        severity: isCritical ? "AUTO_BLOCK" : "SEVERE",
+        points: isCritical ? 30 : 20,
+        value: `${specialRead.action}/100`,
+        detail: `Special watched digit ${watchedSpecialDigit} (${input.contract.side}) has abnormal hostile action (${specialRead.action}/100) on the losing side: ${specialRead.drivers.slice(0, 2).join(", ")}.`,
+      });
+    }
   }
 
   // Aggregate

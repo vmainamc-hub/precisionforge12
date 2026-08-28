@@ -43,11 +43,11 @@ function stateOf(action: number): SpecialActionState {
 export function operatorSpecialDigitAction(
   side: "OVER" | "UNDER",
   winners: number[],
-  intel: DigitIntel | null,
+  intel: DigitIntel | any | null,
 ): OperatorSpecialDigitRead {
   const digit = side === "OVER" ? 1 : 8;
   const onLosingSide = !winners.includes(digit);
-  const p = intel?.profiles?.[digit] ?? null;
+  const p = intel?.profiles?.[digit] ?? (intel as any)?.digitIntel?.profiles?.[digit] ?? null;
 
   if (!p) {
     return {

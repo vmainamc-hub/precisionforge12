@@ -5,6 +5,8 @@ import { rankOpportunities, DEFAULT_SCAN_OPTIONS } from "@/lib/apex/scan";
 import { observationEngine, mapIntelToObservationInputs } from "@/lib/sentinel/observation";
 import { entryLab } from "@/lib/apex/entry-conditions";
 import { losingDigitExposure } from "@/lib/apex/exposure";
+import { contractPsychology, type CanonicalDigitState } from "@/lib/sentinel/digit-psychology";
+import { composeDanger } from "@/lib/sentinel/danger";
 
 describe("Forensic Repair Protocol Verification Suite", () => {
   beforeEach(() => {
@@ -148,6 +150,92 @@ describe("Forensic Repair Protocol Verification Suite", () => {
       expect(intel?.contracts.length).toBe(6);
 
       release();
+    });
+  });
+
+  describe("Phase H: Special Digits (1/8) and Extreme Digits (0/9) Safety Due Diligence", () => {
+    it("strictly hard-blocks OVER when RED sits on excluded digit 1", () => {
+      const mockState: CanonicalDigitState = {
+        n: 1000,
+        windowSize: 1000,
+        pct: [10, 15, 10, 10, 10, 10, 10, 10, 10, 5],
+        recentPct: [10, 15, 10, 10, 10, 10, 10, 10, 10, 5],
+        deltaPp: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        green: 2,
+        secondGreen: 4,
+        red: 1, // Excluded from RED for OVER
+        secondRed: 7,
+        mostIncreasing: 2,
+        mostDecreasing: 9,
+        change: "STABLE",
+        changeDetail: "Stable",
+        summary: "Summary",
+      };
+
+      const result = contractPsychology(mockState, {
+        label: "OVER 2",
+        side: "OVER",
+        barrier: 2,
+        winners: [3, 4, 5, 6, 7, 8, 9],
+      });
+
+      expect(result.hardBlock).toBe(true);
+      expect(result.hardBlockReason).toContain("forbidden digit 1");
+    });
+
+    it("strictly hard-blocks UNDER when RED sits on excluded digit 8", () => {
+      const mockState: CanonicalDigitState = {
+        n: 1000,
+        windowSize: 1000,
+        pct: [10, 10, 10, 10, 10, 10, 10, 10, 15, 5],
+        recentPct: [10, 10, 10, 10, 10, 10, 10, 10, 15, 5],
+        deltaPp: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        green: 7,
+        secondGreen: 5,
+        red: 8, // Excluded from RED for UNDER
+        secondRed: 2,
+        mostIncreasing: 7,
+        mostDecreasing: 0,
+        change: "STABLE",
+        changeDetail: "Stable",
+        summary: "Summary",
+      };
+
+      const result = contractPsychology(mockState, {
+        label: "UNDER 7",
+        side: "UNDER",
+        barrier: 7,
+        winners: [0, 1, 2, 3, 4, 5, 6],
+      });
+
+      expect(result.hardBlock).toBe(true);
+      expect(result.hardBlockReason).toContain("forbidden digit 8");
+    });
+
+    it("evaluates abnormal hostile special digit activity as severe / auto-block danger", () => {
+      const danger = composeDanger({
+        intel: null,
+        contract: {
+          label: "OVER 2",
+          side: "OVER",
+          barrier: 2,
+          winners: [3, 4, 5, 6, 7, 8, 9],
+        },
+        lifetimeTicks: 1000,
+        operatorSpecial: {
+          digit: 1,
+          side: "OVER",
+          action: 85,
+          state: "ABNORMAL",
+          rankingDelta: -6,
+          onLosingSide: true,
+          drivers: ["clustering x2.5", "pressure accelerating"],
+          summary: "Abnormal action on losing digit 1",
+        },
+      });
+
+      expect(danger.isHardBlocked).toBe(true);
+      expect(danger.autoBlock.some((c) => c.code.startsWith("SPECIAL_DIGIT_ABNORMAL_1"))).toBe(true);
     });
   });
 });
