@@ -17,8 +17,10 @@ import { scanMemory, type ScanMemoryEntry } from "../sentinel/scan-memory";
 import { UNKNOWN_REGIME } from "../sentinel/combination-learning";
 import {
   observationEngine,
+  ObservationCell,
   mapIntelToObservationInputs,
   type Proposition,
+  type ObservationDossier,
   PROPOSITIONS,
 } from "@/lib/sentinel/observation";
 import { assessQuality } from "@/lib/sentinel/observation/selectivity";
@@ -179,16 +181,42 @@ export function rankOpportunities(
       });
       continue;
     }
-
-    // Ingest into observation engine (deduplicated by observation cell identity)
-    const inputs = mapIntelToObservationInputs(intel);
-    for (const input of inputs) {
-      observationEngine.ingest(input);
-    }
   }
 
-  // Get all 90 cells ranked by composite score descending with hard blocks forced to bottom
-  const allRankedDossiers = observationEngine.getAllRanked();
+  const liveRankedDossiers = observationEngine.getAllRanked();
+
+  let allRankedDossiers: ObservationDossier[];
+  if (liveRankedDossiers.length > 0) {
+    allRankedDossiers = liveRankedDossiers;
+  } else {
+    // Map intel to candidate dossiers purely (from stateless pure evaluation)
+    const candidateDossiers: ObservationDossier[] = [];
+    const rejectedSymbols = new Set(rejected.map((r) => r.symbol));
+
+    for (const intel of intels) {
+      if (rejectedSymbols.has(intel.symbol)) continue;
+      const inputs = mapIntelToObservationInputs(intel, intel.digits);
+      for (const input of inputs) {
+        const liveCell = observationEngine.getCell(input.marketId as any, input.proposition);
+        const dossier = liveCell.dossier ?? ObservationCell.evaluatePure(input);
+        candidateDossiers.push(dossier);
+      }
+    }
+
+    allRankedDossiers = candidateDossiers.sort((a, b) => {
+      const aBlocked = Boolean(
+        a.veto?.hard || a.danger?.isHardBlocked || (a.veto?.active && a.veto?.hard),
+      );
+      const bBlocked = Boolean(
+        b.veto?.hard || b.danger?.isHardBlocked || (b.veto?.active && b.veto?.hard),
+      );
+
+      if (aBlocked && !bBlocked) return 1;
+      if (!aBlocked && bBlocked) return -1;
+
+      return (b.score ?? 0) - (a.score ?? 0);
+    });
+  }
 
   const intelMap = new Map<string, MarketIntel>();
   for (const intel of intels) {
@@ -216,11 +244,8 @@ export function rankOpportunities(
       (dossier.veto?.active && dossier.veto?.hard),
     );
 
-    const qualification =
-      observationEngine.qualificationManager.getActive(dossier.cellId) ??
-      (dossier.state === "RIPE"
-        ? observationEngine.qualificationManager.attemptQualify(dossier, Date.now())
-        : null);
+    // Pure read of existing active qualification — never attemptQualify during ranking
+    const qualification = observationEngine.qualificationManager.getActive(dossier.cellId) ?? null;
 
     const entryPoint: EntryPointReport = dossier.entryPoint ??
       (dossier.entryDigit?.raw as EntryPointReport) ??

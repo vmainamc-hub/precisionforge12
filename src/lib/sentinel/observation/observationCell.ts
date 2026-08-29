@@ -1133,6 +1133,15 @@ export class ObservationCell {
     return dossier;
   }
 
+  /**
+   * §7/§28 — Evaluates an input purely without mutating any global or persistent cell state.
+   * Useful for stateless ranking when a cell is unobserved or evaluated synthetically.
+   */
+  static evaluatePure(input: EngineEvidenceInput): ObservationDossier {
+    const cell = new ObservationCell(input.marketId, input.proposition);
+    return cell.ingest(input);
+  }
+
   explainCurrent(): string {
     const d = this.getDossier();
     if (!d) return "No evidence observed yet.";

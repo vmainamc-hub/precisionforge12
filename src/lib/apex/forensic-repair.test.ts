@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { apexCore } from "@/lib/apex/core";
 import { derivBus } from "@/lib/deriv/tick-bus";
 import { rankOpportunities, DEFAULT_SCAN_OPTIONS } from "@/lib/apex/scan";
@@ -11,6 +11,7 @@ import { composeDanger } from "@/lib/sentinel/danger";
 describe("Forensic Repair Protocol Verification Suite", () => {
   beforeEach(() => {
     entryLab.reset();
+    vi.restoreAllMocks();
   });
 
   describe("Phase A & B: Pure Ranking & Idempotent Sentinel Ingestion", () => {
@@ -18,15 +19,23 @@ describe("Forensic Repair Protocol Verification Suite", () => {
       const cellInfo = observationEngine.getCell("R_100", "UNDER7");
       const initialAge = cellInfo.dossier?.observationAge ?? 0;
 
-      // Generate dummy market intels
+      // Spies on authoritative ingestion and qualification
+      const ingestSpy = vi.spyOn(observationEngine, "ingest");
+      const qualifySpy = vi.spyOn(observationEngine.qualificationManager, "attemptQualify");
+
+      // Generate market intels
       const intels = apexCore.getAll();
 
-      // Call rankOpportunities 50 times in rapid succession (simulating 50 UI render ticks)
-      for (let i = 0; i < 50; i++) {
+      // Call rankOpportunities 100 times in rapid succession (simulating 100 UI render ticks)
+      for (let i = 0; i < 100; i++) {
         const result = rankOpportunities(intels, DEFAULT_SCAN_OPTIONS);
         expect(result).toBeDefined();
         expect(Array.isArray(result.ranked)).toBe(true);
       }
+
+      // STRICT ARCHITECTURAL PROOF: ranking must NEVER touch ingest or attemptQualify
+      expect(ingestSpy).toHaveBeenCalledTimes(0);
+      expect(qualifySpy).toHaveBeenCalledTimes(0);
 
       // Verify cell tickCounter and state were not mutated by rankOpportunities
       const cellAfter = observationEngine.getCell("R_100", "UNDER7");
