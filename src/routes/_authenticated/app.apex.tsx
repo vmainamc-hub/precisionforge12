@@ -68,7 +68,7 @@ import {
   type ExecutionMode,
 } from "@/lib/apex/journal";
 import { calibrationTable } from "@/lib/apex/memory";
-import type { RankedOpportunity } from "@/lib/apex/types";
+import type { RankedOpportunity, BestOf90Result } from "@/lib/apex/types";
 import { Button } from "@/components/ui/button";
 import {
   Accordion,
