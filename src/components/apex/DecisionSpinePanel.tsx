@@ -50,13 +50,17 @@ function Row({
 }
 
 export default function DecisionSpinePanel({ item }: { item: RankedOpportunity }) {
-  const spine = item.spine;
+  const spine = item?.spine;
   if (!spine) return null;
 
   const structure = spine.structure;
   const validation = spine.validation;
   const veto = spine.veto;
-  const [structureLine, pressureLine, validationLine, vetoLine] = spine.lines;
+  if (!structure || !veto) return null;
+
+  const [structureLine, pressureLine, validationLine, vetoLine] = Array.isArray(spine.lines)
+    ? spine.lines
+    : [];
 
   return (
     <section className="mt-5 rounded-lg border border-border/50 bg-background/40 p-4">

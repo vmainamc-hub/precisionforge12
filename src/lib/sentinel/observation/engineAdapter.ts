@@ -843,11 +843,7 @@ export function mapIntelToObservationInputs(
       hasValidatedEntry: hasValidatedEntryDigit(entryPoint),
     });
     const operatorSpecial = operatorSpecialDigitAction(side, winners, intel);
-    const governedSpine = runVetoEngine({
-      structure: contractSpine.structure,
-      validation,
-      field: pressureField,
-    });
+    const governedSpine = contractSpine;
     const marketLearning = marketProfiles.prior(
       intel.symbol,
       c.label,

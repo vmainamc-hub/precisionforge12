@@ -154,7 +154,7 @@ export default function DbotHandoff({ item }: { item: RankedOpportunity }) {
     `VALIDITY      : ${ep.window.label} — ${ep.window.basis}`,
     `EXEC SURVIVAL : ${survivalValue} — ${survivalSub}`,
     `TRIGGER BASIS : ${triggerValue}`,
-    trig && trig.first.n + trig.subsequent.n > 0 ? `TRIGGER BASIS : ${trig.lines.join(" | ")}` : "",
+    trig && Array.isArray(trig.lines) && trig.first.n + trig.subsequent.n > 0 ? `TRIGGER BASIS : ${trig.lines.join(" | ")}` : "",
 
     d
       ? `TYPICAL WAIT  : ~${d.expectedWaitTicks} ticks between appearances (last seen ${d.sinceSeen} ticks ago)`
@@ -315,14 +315,15 @@ export default function DbotHandoff({ item }: { item: RankedOpportunity }) {
             {skipNext ? " (the next print is not the favoured cohort)" : ""}.
           </p>
           <ul className="mt-2 space-y-1">
-            {trig.lines.map((line) => (
-              <li
-                key={line}
-                className="font-mono text-[10px] leading-relaxed text-muted-foreground"
-              >
-                {line}
-              </li>
-            ))}
+            {Array.isArray(trig.lines) &&
+              trig.lines.map((line) => (
+                <li
+                  key={line}
+                  className="font-mono text-[10px] leading-relaxed text-muted-foreground"
+                >
+                  {line}
+                </li>
+              ))}
           </ul>
         </div>
       ) : null}
