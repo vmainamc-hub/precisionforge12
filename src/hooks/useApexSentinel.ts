@@ -48,11 +48,20 @@ export function useApexSentinel(options: ScanOptions = DEFAULT_SCAN_OPTIONS): Ap
     };
   }, []);
 
-  const intels = useMemo(() => apexCore.getAll(), [tick]);
+  const intels = useMemo(() => {
+    void tick;
+    return apexCore.getAll();
+  }, [tick]);
   const ranked = useMemo(() => rankOpportunities(intels, optsRef.current).ranked, [intels]);
   const gd = useMemo(() => globalDanger(intels), [intels]);
-  const memory = useMemo(() => memoryStats(), [tick]);
-  const observationHealth = useMemo(() => observationEngine.getHealthStatus(), [tick]);
+  const memory = useMemo(() => {
+    void tick;
+    return memoryStats();
+  }, [tick]);
+  const observationHealth = useMemo(() => {
+    void tick;
+    return observationEngine.getHealthStatus();
+  }, [tick]);
 
   const runScan = useCallback(() => {
     setScanning(true);

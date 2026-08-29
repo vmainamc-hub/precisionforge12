@@ -40,6 +40,21 @@ function getPow10(pip: number): number {
   return (pip >= 0 && pip < POW10_CACHE.length) ? POW10_CACHE[pip] : Math.pow(10, pip);
 }
 
+interface PendingBusRequest {
+  reqId: number;
+  symbol: string;
+  type: "history" | "catchup" | "subscribe";
+  connectionGen: number;
+  createdAt: number;
+  expiresAt: number;
+}
+
+interface CatchupTracker {
+  attempts: number;
+  cooldownUntil: number;
+  pendingReqId: number | null;
+}
+
 class DerivTickBus {
   private ws: WebSocket | null = null;
   private status: BusStatus = "idle";
@@ -61,6 +76,9 @@ class DerivTickBus {
   private watchdogTimer: ReturnType<typeof setInterval> | null = null;
   private endpointIndex = 0;
   private connectionGen = 0;
+  private nextReqId = 1;
+  private pendingRequests = new Map<number, PendingBusRequest>();
+  private catchupTrackers = new Map<string, CatchupTracker>();
 
   private envHooked = false;
   private wakeLock: any = null;
@@ -221,6 +239,19 @@ class DerivTickBus {
       this.handshakeTimer = null;
     }
 
+    // Detach and cleanly close any prior socket to prevent stale callbacks
+    if (this.ws) {
+      const oldWs = this.ws;
+      oldWs.onopen = null;
+      oldWs.onmessage = null;
+      oldWs.onerror = null;
+      oldWs.onclose = null;
+      try {
+        oldWs.close();
+      } catch {}
+      this.ws = null;
+    }
+
     this.setStatus("connecting");
     const gen = ++this.connectionGen;
     const activeUrl = DERIV_FALLBACK_ENDPOINTS[this.endpointIndex % DERIV_FALLBACK_ENDPOINTS.length];
@@ -238,7 +269,7 @@ class DerivTickBus {
 
     // Handshake Timeout Guard: if connection hangs in CONNECTING state, abort and failover
     this.handshakeTimer = setTimeout(() => {
-      if (this.connectionGen !== gen) return;
+      if (this.connectionGen !== gen || this.ws !== ws) return;
       this.handshakeTimer = null;
       if (ws.readyState === WebSocket.CONNECTING) {
         try {
@@ -250,7 +281,7 @@ class DerivTickBus {
     }, HANDSHAKE_TIMEOUT_MS);
 
     ws.onopen = () => {
-      if (this.connectionGen !== gen) return;
+      if (this.connectionGen !== gen || this.ws !== ws) return;
       if (this.handshakeTimer) {
         clearTimeout(this.handshakeTimer);
         this.handshakeTimer = null;
@@ -264,7 +295,7 @@ class DerivTickBus {
       symbols.forEach((sym, idx) => {
         // Stagger history fetches across short ticks to prevent socket buffer congestion
         setTimeout(() => {
-          if (this.connectionGen === gen && this.ws?.readyState === WebSocket.OPEN) {
+          if (this.connectionGen === gen && this.ws === ws && this.ws?.readyState === WebSocket.OPEN) {
             this.sendHistoryRequest(sym);
             this.sendSubscribeRequest(sym);
           }
@@ -276,7 +307,7 @@ class DerivTickBus {
     };
 
     ws.onmessage = (ev) => {
-      if (this.connectionGen !== gen) return;
+      if (this.connectionGen !== gen || this.ws !== ws) return;
       this.lastMessageAt = Date.now();
       let msg: any;
       try {
@@ -294,6 +325,7 @@ class DerivTickBus {
 
       if (msg.msg_type === "tick" && msg.tick) {
         const sym = msg.tick.symbol as string;
+        this.catchupTrackers.delete(sym);
         const epoch = Number(msg.tick.epoch);
         const price = Number(msg.tick.quote);
         if (msg.tick.id) this.subIds.set(sym, msg.tick.id);
@@ -311,12 +343,23 @@ class DerivTickBus {
       }
 
       if (msg.msg_type === "history" && msg.history) {
-        const sym = (msg.echo_req?.ticks_history || msg.history?.symbol || msg.symbol) as string;
+        const reqId = Number(msg.req_id ?? msg.echo_req?.req_id);
+        const pending = Number.isFinite(reqId) ? this.pendingRequests.get(reqId) : undefined;
+        if (pending) {
+          this.pendingRequests.delete(reqId);
+          // If request was initiated for an older connection generation, discard response
+          if (pending.connectionGen !== gen) return;
+        }
+
+        const sym = (pending?.symbol || msg.echo_req?.ticks_history || msg.history?.symbol || msg.symbol) as string;
         if (!sym) return;
+
+        this.catchupTrackers.delete(sym);
+
         if (msg.pip_size !== undefined) this.setPip(sym, Number(msg.pip_size));
         const { prices, times } = msg.history as { prices: number[]; times: number[] };
         if (!prices || !times) return;
-        const isSeed = (msg.echo_req?.count ?? 0) >= HISTORY_COUNT;
+        const isSeed = (msg.echo_req?.count ?? 0) >= HISTORY_COUNT || (pending?.type === "history");
         const prev = this.buffers.get(sym) ?? [];
         const lastKnown = this.lastEpoch.get(sym) ?? 0;
         const fresh: Tick[] = [];
@@ -350,7 +393,7 @@ class DerivTickBus {
     };
 
     ws.onerror = () => {
-      if (this.connectionGen !== gen) return;
+      if (this.connectionGen !== gen || this.ws !== ws) return;
       if (this.handshakeTimer) {
         clearTimeout(this.handshakeTimer);
         this.handshakeTimer = null;
@@ -359,7 +402,7 @@ class DerivTickBus {
     };
 
     ws.onclose = () => {
-      if (this.connectionGen !== gen) return;
+      if (this.connectionGen !== gen || this.ws !== ws) return;
       if (this.handshakeTimer) {
         clearTimeout(this.handshakeTimer);
         this.handshakeTimer = null;
@@ -393,6 +436,16 @@ class DerivTickBus {
 
   private sendHistoryRequest(sym: string) {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+    const reqId = ++this.nextReqId;
+    const now = Date.now();
+    this.pendingRequests.set(reqId, {
+      reqId,
+      symbol: sym,
+      type: "history",
+      connectionGen: this.connectionGen,
+      createdAt: now,
+      expiresAt: now + 15_000,
+    });
     try {
       this.ws.send(
         JSON.stringify({
@@ -401,9 +454,12 @@ class DerivTickBus {
           count: HISTORY_COUNT,
           end: "latest",
           style: "ticks",
+          req_id: reqId,
         }),
       );
-    } catch {}
+    } catch {
+      this.pendingRequests.delete(reqId);
+    }
   }
 
   private sendSubscribeRequest(sym: string) {
@@ -415,6 +471,18 @@ class DerivTickBus {
 
   private sendCatchupRequest(sym: string) {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+    const reqId = ++this.nextReqId;
+    const now = Date.now();
+    this.pendingRequests.set(reqId, {
+      reqId,
+      symbol: sym,
+      type: "catchup",
+      connectionGen: this.connectionGen,
+      createdAt: now,
+      expiresAt: now + 15_000,
+    });
+    const tracker = this.catchupTrackers.get(sym);
+    if (tracker) tracker.pendingReqId = reqId;
     try {
       this.ws.send(
         JSON.stringify({
@@ -423,9 +491,13 @@ class DerivTickBus {
           count: CATCHUP_COUNT,
           end: "latest",
           style: "ticks",
+          req_id: reqId,
         }),
       );
-    } catch {}
+    } catch {
+      this.pendingRequests.delete(reqId);
+      if (tracker && tracker.pendingReqId === reqId) tracker.pendingReqId = null;
+    }
   }
 
   private sendForget(subId: string) {
@@ -463,7 +535,7 @@ class DerivTickBus {
 
   private startWatchdog() {
     this.stopWatchdog();
-    // Every 2.5s, check socket health and stale symbols.
+    // Every 2.5s, check socket health, stale symbols, and sweep expired requests.
     this.watchdogTimer = setInterval(() => {
       const now = Date.now();
       
@@ -480,10 +552,25 @@ class DerivTickBus {
         return;
       }
 
-      // Check per-symbol lag and trigger catch-up requests
+      // Cleanup expired pending requests
+      for (const [id, req] of this.pendingRequests.entries()) {
+        if (now > req.expiresAt || req.connectionGen !== this.connectionGen) {
+          this.pendingRequests.delete(id);
+        }
+      }
+
+      // Check per-symbol lag and trigger catch-up requests with cooldown & backoff
       for (const sym of this.refcount.keys()) {
         const lastEpochMs = (this.lastEpoch.get(sym) ?? 0) * 1000;
         if (lastEpochMs && now - lastEpochMs > STALE_TICK_MS) {
+          const tracker = this.catchupTrackers.get(sym) ?? { attempts: 0, cooldownUntil: 0, pendingReqId: null };
+          if (now < tracker.cooldownUntil) continue;
+          if (tracker.pendingReqId && this.pendingRequests.has(tracker.pendingReqId)) continue;
+
+          tracker.attempts += 1;
+          const backoffMs = Math.min(30_000, 2_500 * Math.pow(1.5, Math.min(tracker.attempts - 1, 5)));
+          tracker.cooldownUntil = now + backoffMs;
+          this.catchupTrackers.set(sym, tracker);
           this.sendCatchupRequest(sym);
         }
       }

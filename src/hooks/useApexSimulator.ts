@@ -21,19 +21,22 @@ export function useApexSimulator(ledgerLimit = 40) {
   }, []);
 
   return useMemo(
-    () => ({
-      config: apexSimulator.getConfig(),
-      overall: apexSimulator.overall(),
-      breakdown: apexSimulator.breakdown(),
-      byMarket: apexSimulator.byMarket(),
-      ledger: apexSimulator.getLedger(ledgerLimit),
-      open: apexSimulator.getOpen(),
-      /** Live simulator state for EVERY valid market, trading or not. */
-      states: apexSimulator.getStates(),
-      marketLedger: (symbol: string, limit = 100) => apexSimulator.getMarketLedger(symbol, limit),
-      breakdownFor: (symbol: string) => apexSimulator.breakdown(symbol),
-      reset: () => apexSimulator.reset(),
-    }),
+    () => {
+      void tick;
+      return {
+        config: apexSimulator.getConfig(),
+        overall: apexSimulator.overall(),
+        breakdown: apexSimulator.breakdown(),
+        byMarket: apexSimulator.byMarket(),
+        ledger: apexSimulator.getLedger(ledgerLimit),
+        open: apexSimulator.getOpen(),
+        /** Live simulator state for EVERY valid market, trading or not. */
+        states: apexSimulator.getStates(),
+        marketLedger: (symbol: string, limit = 100) => apexSimulator.getMarketLedger(symbol, limit),
+        breakdownFor: (symbol: string) => apexSimulator.breakdown(symbol),
+        reset: () => apexSimulator.reset(),
+      };
+    },
     [tick, ledgerLimit],
   );
 }

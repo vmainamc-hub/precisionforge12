@@ -24,6 +24,21 @@ interface HistoryEntry {
   input: EngineEvidenceInput;
 }
 
+export function computeObservationIdentity(input: EngineEvidenceInput): string {
+  if (input.observationIdentity) return input.observationIdentity;
+  const marketId = input.marketId || "UNKNOWN";
+  const prop = input.proposition || "UNKNOWN";
+  const tickId =
+    input.sourceTickId !== undefined
+      ? String(input.sourceTickId)
+      : input.tickIndex !== undefined
+        ? String(input.tickIndex)
+        : "tick";
+  const ts = input.timestamp || 0;
+  const ver = input.analysisVersion || "v1";
+  return `${marketId}:${prop}:${tickId}:${ts}:${ver}`;
+}
+
 /**
  * One of the 90 independent observation cells (§2, §7, §8).
  * Owns its own state, history, dossier, and event log. Never reads or is
@@ -52,6 +67,9 @@ export class ObservationCell {
   private lastInput: EngineEvidenceInput | null = null;
   private lastMeaningfulEvidenceTick = 0;
   private previousThesis: MarketThesis | null = null;
+  private recentObservationIds = new Set<string>();
+  private observationIdQueue: string[] = [];
+  private static readonly MAX_TRACKED_OBSERVATIONS = 256;
 
   // Feedback post-mortem learning
   private postMortems: CellFeedbackPostMortem[] = [];
@@ -187,10 +205,18 @@ export class ObservationCell {
 
   /** §22.3/§22.6 integration point: call once per tick/scan with mapped engine evidence. */
   ingest(input: EngineEvidenceInput): ObservationDossier {
-    // Idempotency: Protect against duplicate ingestion of the exact same tick timestamp
-    if (this.lastInput && this.lastInput.timestamp === input.timestamp && input.timestamp > 0) {
+    // Exactly-once identity: Protect against duplicate ingestion of the exact same observation identity
+    const obsId = computeObservationIdentity(input);
+    if (this.recentObservationIds.has(obsId)) {
       const existing = this.getDossier();
       if (existing) return existing;
+    }
+
+    this.recentObservationIds.add(obsId);
+    this.observationIdQueue.push(obsId);
+    if (this.observationIdQueue.length > ObservationCell.MAX_TRACKED_OBSERVATIONS) {
+      const oldest = this.observationIdQueue.shift();
+      if (oldest) this.recentObservationIds.delete(oldest);
     }
 
     this.tickCounter += 1;
@@ -290,6 +316,29 @@ export class ObservationCell {
 
   getLastVetoReason(): string | null {
     return this.lastVetoReason;
+  }
+
+  reset(): void {
+    this.state = "WATCHING";
+    this.createdAtTick = 0;
+    this.createdAtTimestamp = 0;
+    this.tickCounter = 0;
+    this.currentStateSinceTick = 0;
+    this.stateEnteredTimestamp = 0;
+    this.history = [];
+    this.events = [];
+    this.transitionsCount = 0;
+    this.contradictionStreak = 0;
+    this.cleanStreak = 0;
+    this.supportingStreak = 0;
+    this.vetoStreak = 0;
+    this.lastVetoReason = null;
+    this.lastInput = null;
+    this.lastMeaningfulEvidenceTick = 0;
+    this.previousThesis = null;
+    this.recentObservationIds.clear();
+    this.observationIdQueue = [];
+    this.clearFeedbackState();
   }
 
   // -- internal ---------------------------------------------------------

@@ -106,6 +106,14 @@ export interface EngineEvidenceInput {
   proposition: Proposition;
   /** Tick or scan timestamp (ms epoch, or monotonic tick counter — must be strictly increasing per market). */
   timestamp: number;
+  /** Authoritative source tick ID or monotonic tick counter. */
+  sourceTickId?: string | number;
+  /** Index in the tick/digit sequence. */
+  tickIndex?: number;
+  /** Analysis version identifier. */
+  analysisVersion?: string;
+  /** Pre-calculated deterministic observation identity. */
+  observationIdentity?: string;
 
   psychology: PsychologyEvidence;
   entryDigit: EntryDigitEvidence;
@@ -231,6 +239,10 @@ export function mapIntelToObservationInputs(
 
   return intel.contracts.map((c: any): EngineEvidenceInput => {
     const prop = c.id as Proposition;
+    const sourceTickId = intel.lastTickAt ? `${marketId}:${intel.lastTickAt}` : `${marketId}:${digits.length}`;
+    const tickIndex = digits.length;
+    const analysisVersion = "v1";
+    const observationIdentity = `${marketId}:${prop}:${sourceTickId}:${timestamp}:${analysisVersion}`;
     const side = (c.side ?? (prop.startsWith("OVER") ? "OVER" : "UNDER")) as "OVER" | "UNDER";
     const isOver = side === "OVER";
     const winners: number[] =
@@ -910,6 +922,10 @@ export function mapIntelToObservationInputs(
       marketId,
       proposition: prop,
       timestamp,
+      sourceTickId,
+      tickIndex,
+      analysisVersion,
+      observationIdentity,
       psychology: {
         direction: psychDirection,
         state: psychState,

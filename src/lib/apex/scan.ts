@@ -161,7 +161,7 @@ export function rankOpportunities(
 ): { ranked: RankedOpportunity[]; rejected: ScanResult["rejected"] } {
   const rejected: ScanResult["rejected"] = [];
 
-  // Ingest all active market intels into the 90-cell Observation Engine (idempotent on unchanged ticks)
+  // Check market health and filter out unavailable/stale markets
   for (const intel of intels) {
     if (intel.dataState === "UNAVAILABLE") {
       rejected.push({ symbol: intel.symbol, contract: "—", reason: "DATA UNAVAILABLE" });
@@ -180,8 +180,8 @@ export function rankOpportunities(
       continue;
     }
 
-    const marketDigits = apexCore.getDeepDigits(intel.symbol);
-    const inputs = mapIntelToObservationInputs(intel, marketDigits);
+    // Ingest into observation engine (deduplicated by observation cell identity)
+    const inputs = mapIntelToObservationInputs(intel);
     for (const input of inputs) {
       observationEngine.ingest(input);
     }

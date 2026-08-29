@@ -1,7 +1,7 @@
 // Precision Digit Intelligence Card
 // Visualizes the 10x10 Transition Tensor, Digit Hazard Curve, 42-Contract Monte Carlo Universe, and Threshold Sweep.
 
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { Layers } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
@@ -12,24 +12,24 @@ import {
 } from "@/lib/precision-digit";
 
 interface Props {
-  digits: number[];
+  digits?: number[];
   marketName: string;
 }
 
 export function PrecisionDigitIntelligenceCard({ digits = [], marketName }: Props) {
-  const safeDigits = digits ?? [];
+  const safeDigits = useMemo(() => digits ?? [], [digits]);
   const [activeSubTab, setActiveSubTab] = useState<"tensor" | "hazard" | "sim42" | "sweep">(
     "sim42",
   );
 
   // Run analytical engines on current digit stream
-  const tensor = React.useMemo(() => computeTransitionTensor(safeDigits), [safeDigits]);
-  const hazard = React.useMemo(() => computeDigitHazards(safeDigits), [safeDigits]);
-  const sim = React.useMemo(
+  const tensor = useMemo(() => computeTransitionTensor(safeDigits), [safeDigits]);
+  const hazard = useMemo(() => computeDigitHazards(safeDigits), [safeDigits]);
+  const sim = useMemo(
     () => runDigitSimulationLoop(safeDigits, marketName),
     [safeDigits, marketName],
   );
-  const sweep = React.useMemo(() => sweepThresholds(safeDigits), [safeDigits]);
+  const sweep = useMemo(() => sweepThresholds(safeDigits), [safeDigits]);
 
   const lastDigit = safeDigits.length > 0 ? safeDigits[safeDigits.length - 1] : 0;
 

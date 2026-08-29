@@ -127,11 +127,21 @@ export function ObservationUniverseOverview({
   }, []);
 
   // Read overview entries and active qualifications from observation engine
-  const overview = useMemo(() => observationEngine.getOverview(90), [liveTick]);
-  const qualifiedList = useMemo(() => observationEngine.getAllQualified(), [liveTick]);
-  const healthReport = useMemo(() => observationEngine.getHealthStatus(), [liveTick]);
+  const overview = useMemo(() => {
+    void liveTick;
+    return observationEngine.getOverview(90);
+  }, [liveTick]);
+  const qualifiedList = useMemo(() => {
+    void liveTick;
+    return observationEngine.getAllQualified();
+  }, [liveTick]);
+  const healthReport = useMemo(() => {
+    void liveTick;
+    return observationEngine.getHealthStatus();
+  }, [liveTick]);
 
   const selectedDossier = useMemo(() => {
+    void liveTick;
     if (!selectedCell) return null;
     return observationEngine.getCell(selectedCell.market, selectedCell.prop);
   }, [selectedCell, liveTick]);
